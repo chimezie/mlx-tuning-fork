@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=67.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlx-tuning-fork"
+version = "0.1"
+dependencies = [
+    "mlx",
+    "click",
+    "pyyaml"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
