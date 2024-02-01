@@ -95,7 +95,6 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
-@click.option('--hash-type', type=click.Choice(['MD5', 'SHA1'], case_sensitive=False))
 @click.option('--prompt', default=None, type=str,
               help='Commandline prompt (overrides) prompt in YAML configuration')
 @click.option('--prompt-format',
