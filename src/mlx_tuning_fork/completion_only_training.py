@@ -3,6 +3,7 @@ import numpy as np
 from mlx_lm.tuner.lora import LoRALinear
 from mlx_lm.tuner.trainer import TrainingArgs, evaluate, train
 from mlx_lm.utils import generate, load
+from mlx_lm.generate import colorprint_by_t0
 from mlx_lm import lora
 from types import SimpleNamespace
 import mlx.core as mx
@@ -11,9 +12,8 @@ import mlx.nn as nn
 import click
 import re
 import math
-from .dataset import Dataset
-from .config import CONFIG_DEFAULTS
-import prompt_templates
+from mlx_tuning_fork.dataset import Dataset
+from mlx_tuning_fork.config import CONFIG_DEFAULTS
 import yaml
 import json
 import csv
@@ -95,18 +95,20 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
-@click.option('--prompt', default=None, type=str,
+@click.option('-p', '--prompt', default=None, type=str,
               help='Commandline prompt (overrides) prompt in YAML configuration')
-@click.option('--prompt-format',
+@click.option('-f', '--prompt-format',
               type=click.Choice(['mistral'], case_sensitive=False))
-@click.argument('filename', help="The YAML confguration file")
-def main(verbose, summary, prompt, prompt_format, filename):
+@click.argument('config_file')
+def main(verbose, summary, prompt, prompt_format, config_file):
     global pbar, prompt_formatter
-    prompt_formatter = getattr(prompt_templates, prompt_format).TrainingRecordHandler
+    if prompt_format == 'mistral':
+        from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
+        prompt_formatter = TrainingRecordHandler
 
     lora.Dataset = Dataset
 
-    with open(filename, "r") as file:
+    with open(config_file, "r") as file:
         config = yaml.load(file, loader)
         param_dict = {k: v for k, v in config["parameters"].items()}
         if "model" not in param_dict:
@@ -118,11 +120,15 @@ def main(verbose, summary, prompt, prompt_format, filename):
         param_dict["verbose"] = verbose
         if prompt:
             param_dict["prompt"] = prompt
+            param_dict["train"] = False
         pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
     print("Loading pretrained model")
-    model, tokenizer = load('/Users/oori/medical_llm/raw_models/mlx/')
+    tokenizer_config = {"trust_remote_code": True if args.trust_remote_code else None}
+    # if args.eos_token is not None:
+    #     tokenizer_config["eos_token"] = args.eos_token
+    model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
 
     model.freeze()
     for l in model.model.layers[len(model.model.layers) - args.lora_layers :]:
@@ -145,18 +151,19 @@ def main(verbose, summary, prompt, prompt_format, filename):
     print(
         f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
         f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
-        f"{len(valid_set):,} records, training {args.lora_layers} out of {len(model.model.layers)} using qLoRa "
+        f"{len(valid_set):,} records, training {args.lora_layers} layers out of {len(model.model.layers)} using qLoRa."
     )
 
-    scaled_steps_per_report = int(10 * (num_iterations) / 1000)
-    scaled_steps_per_eval = int(num_iterations * 200 / 1000)
-    scaled_val_batches = int((scaled_steps_per_eval * 3 * len(valid_set)) / (2 * args.batch_size * num_iterations))
+    scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
+    scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
+    scaled_val_batches = int((scaled_steps_per_eval * args.validation_scale * len(valid_set)) /
+                             (2 * args.batch_size * num_iterations))
     scaled_save_every = int(scaled_steps_per_eval / 2)
 
     print(
         f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
         f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, and saving the "
-        f"adapter every {scaled_save_every:} steps."
+        f"adapter every {scaled_save_every:,} steps."
     )
 
     training_args = TrainingArgs(
@@ -205,6 +212,7 @@ def main(verbose, summary, prompt, prompt_format, filename):
             "Use --train to learn and save the adapters.npz."
         )
     model.load_weights(args.adapter_file, strict=False)
+    print(f"Loaded weights from {args.adapter_file}")
 
     if args.test:
         print("Testing")
@@ -226,10 +234,6 @@ def main(verbose, summary, prompt, prompt_format, filename):
         print("Generating")
         model.eval()
 
-        tokenizer_config = {"trust_remote_code": True if args.trust_remote_code else None}
-        if args.eos_token is not None:
-            tokenizer_config["eos_token"] = args.eos_token
-
         if not args.ignore_chat_template and (
                 hasattr(tokenizer, "apply_chat_template")
                 and tokenizer.chat_template is not None
@@ -239,7 +243,7 @@ def main(verbose, summary, prompt, prompt_format, filename):
         else:
             prompt = args.prompt
 
-        formatter = generate.colorprint_by_t0 if args.colorize else None
+        formatter = colorprint_by_t0 if args.colorize else None
 
         generate(
             model, tokenizer, prompt, args.temp, args.max_tokens, True, formatter=formatter

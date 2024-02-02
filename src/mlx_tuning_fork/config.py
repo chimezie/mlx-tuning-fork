@@ -22,6 +22,8 @@ CONFIG_DEFAULTS = {
     "tokens_per_eval": 10,
     "save_every": 100,
     "validation_scale": 5,
+    "reporting_interval_proportion": 0.01, #10/1000
+    "validation_interval_proportion": 0.2, #200/1000
     "train_loss_file": None,
     "validation_loss_file": None,
     "ignore_chat_template": False,
