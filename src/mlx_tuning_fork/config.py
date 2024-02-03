@@ -24,10 +24,13 @@ CONFIG_DEFAULTS = {
     "validation_scale": 5,
     "reporting_interval_proportion": 0.01, #10/1000
     "validation_interval_proportion": 0.2, #200/1000
+    "validations_per_iteration": 1,
+    "adapter_save_interval_proportion": .1,
     "train_loss_file": None,
     "validation_loss_file": None,
     "ignore_chat_template": False,
     "colorize": False,
-    "trust_remote_code": False
+    "trust_remote_code": False,
+    "all_linear_layers": False
 
 }

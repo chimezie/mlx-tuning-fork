@@ -97,10 +97,13 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
 @click.option('-p', '--prompt', default=None, type=str,
               help='Commandline prompt (overrides) prompt in YAML configuration')
+@click.option('-t', '--temperature', default=None, type=float,
+              help='Prompt generation temperature')
+
 @click.option('-f', '--prompt-format',
               type=click.Choice(['mistral'], case_sensitive=False))
 @click.argument('config_file')
-def main(verbose, summary, prompt, prompt_format, config_file):
+def main(verbose, summary, prompt, temperature, prompt_format, config_file):
     global pbar, prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
@@ -116,11 +119,12 @@ def main(verbose, summary, prompt, prompt_format, config_file):
         for key, default in CONFIG_DEFAULTS.items():
             if key not in param_dict:
                 param_dict[key] = default
-        param_dict["dataset_summary"] = summary
         param_dict["verbose"] = verbose
         if prompt:
             param_dict["prompt"] = prompt
             param_dict["train"] = False
+            if temperature:
+                param_dict["temperature"] = temperature
         pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
@@ -131,9 +135,14 @@ def main(verbose, summary, prompt, prompt_format, config_file):
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
 
     model.freeze()
+    if args.all_linear_layers:
+        print("Using LoRa on all linear layers ..")
     for l in model.model.layers[len(model.model.layers) - args.lora_layers :]:
         l.self_attn.q_proj = LoRALinear.from_linear(l.self_attn.q_proj)
         l.self_attn.v_proj = LoRALinear.from_linear(l.self_attn.v_proj)
+        if args.all_linear_layers:
+            l.self_attn.k_proj = LoRALinear.from_linear(l.self_attn.k_proj)
+            l.self_attn.o_proj = LoRALinear.from_linear(l.self_attn.o_proj)
         if hasattr(l, "block_sparse_moe"):
             l.block_sparse_moe.gate = LoRALinear.from_linear(l.block_sparse_moe.gate)
 
@@ -146,8 +155,6 @@ def main(verbose, summary, prompt, prompt_format, config_file):
     else:
         num_iterations = epoch_num_steps * args.epochs
 
-    pbar = tqdm(total=num_iterations)
-
     print(
         f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
         f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
@@ -156,9 +163,9 @@ def main(verbose, summary, prompt, prompt_format, config_file):
 
     scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
     scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
-    scaled_val_batches = int((scaled_steps_per_eval * args.validation_scale * len(valid_set)) /
-                             (2 * args.batch_size * num_iterations))
-    scaled_save_every = int(scaled_steps_per_eval / 2)
+    scaled_val_batches = int(args.validations_per_iteration * args.validation_interval_proportion * num_iterations
+                             / args.batch_size)
+    scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
 
     print(
         f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
@@ -166,88 +173,90 @@ def main(verbose, summary, prompt, prompt_format, config_file):
         f"adapter every {scaled_save_every:,} steps."
     )
 
-    training_args = TrainingArgs(
-        batch_size=args.batch_size,
-        iters=num_iterations,
-        val_batches=scaled_val_batches,
-        steps_per_report=scaled_steps_per_report,
-        steps_per_eval=scaled_steps_per_eval,
-        steps_per_save=scaled_save_every,
-        adapter_file=args.adapter_file,
-    )
-
-    if args.train:
-        print("Training")
-        model.train()
-        opt = optim.Adam(learning_rate=args.learning_rate)
-        train_loss = []
-        validation_loss = []
-        train(
-            model=model,
-            tokenizer=tokenizer,
-            args=training_args,
-            optimizer=opt,
-            train_dataset=train_set,
-            val_dataset=valid_set,
-            loss=completions_only_loss,
-            iterate_batches=completions_only_iterate_batches,
-            reported_train_loss_data=train_loss,
-            validation_loss_data=validation_loss
-        )
-        if args.train_loss_file:
-            with Path(args.train_loss_file).open('a') as csvfile:
-                writer = csv.writer(csvfile, delimiter='\t')
-                writer.writerows(train_loss)
-            print(f"Wrote loss data to {args.train_loss_file}")
-        if args.validation_loss_file:
-            with Path(args.validation_loss_file).open('a') as csvfile:
-                writer = csv.writer(csvfile, delimiter='\t')
-                writer.writerows(validation_loss)
-            print(f"Wrote loss data to {args.validation_loss_file}")
-
-    # Load the LoRA adapter weights which we assume should exist by this point
-    if not Path(args.adapter_file).is_file():
-        raise ValueError(
-            f"Adapter file {args.adapter_file} missing. "
-            "Use --train to learn and save the adapters.npz."
-        )
-    model.load_weights(args.adapter_file, strict=False)
-    print(f"Loaded weights from {args.adapter_file}")
-
-    if args.test:
-        print("Testing")
-        model.eval()
-
-        test_loss = evaluate(
-            model=model,
-            dataset=test_set,
-            tokenizer=tokenizer,
+    if not summary:
+        training_args = TrainingArgs(
             batch_size=args.batch_size,
-            num_batches=args.test_batches,
+            iters=num_iterations,
+            val_batches=scaled_val_batches,
+            steps_per_report=scaled_steps_per_report,
+            steps_per_eval=scaled_steps_per_eval,
+            steps_per_save=scaled_save_every,
+            adapter_file=args.adapter_file,
         )
 
-        test_ppl = math.exp(test_loss)
+        if args.train:
+            print("Training")
+            model.train()
+            opt = optim.Adam(learning_rate=args.learning_rate)
+            train_loss = []
+            validation_loss = []
+            pbar = tqdm(total=num_iterations)
+            train(
+                model=model,
+                tokenizer=tokenizer,
+                args=training_args,
+                optimizer=opt,
+                train_dataset=train_set,
+                val_dataset=valid_set,
+                loss=completions_only_loss,
+                iterate_batches=completions_only_iterate_batches,
+                reported_train_loss_data=train_loss,
+                validation_loss_data=validation_loss
+            )
+            if args.train_loss_file:
+                with Path(args.train_loss_file).open('a') as csvfile:
+                    writer = csv.writer(csvfile, delimiter='\t')
+                    writer.writerows(train_loss)
+                print(f"Wrote loss data to {args.train_loss_file}")
+            if args.validation_loss_file:
+                with Path(args.validation_loss_file).open('a') as csvfile:
+                    writer = csv.writer(csvfile, delimiter='\t')
+                    writer.writerows(validation_loss)
+                print(f"Wrote loss data to {args.validation_loss_file}")
 
-        print(f"Test loss {test_loss:.3f}, Test ppl {test_ppl:.3f}.")
+        # Load the LoRA adapter weights which we assume should exist by this point
+        if not Path(args.adapter_file).is_file():
+            raise ValueError(
+                f"Adapter file {args.adapter_file} missing. "
+                "Use --train to learn and save the adapters.npz."
+            )
+        model.load_weights(args.adapter_file, strict=False)
+        print(f"Loaded weights from {args.adapter_file}")
 
-    if args.prompt is not None:
-        print("Generating")
-        model.eval()
+        if args.test:
+            print("Testing")
+            model.eval()
 
-        if not args.ignore_chat_template and (
-                hasattr(tokenizer, "apply_chat_template")
-                and tokenizer.chat_template is not None
-        ):
-            messages = [{"role": "user", "content": args.prompt}]
-            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        else:
-            prompt = args.prompt
+            test_loss = evaluate(
+                model=model,
+                dataset=test_set,
+                tokenizer=tokenizer,
+                batch_size=args.batch_size,
+                num_batches=args.test_batches,
+            )
 
-        formatter = colorprint_by_t0 if args.colorize else None
+            test_ppl = math.exp(test_loss)
 
-        generate(
-            model, tokenizer, prompt, args.temp, args.max_tokens, True, formatter=formatter
-        )
+            print(f"Test loss {test_loss:.3f}, Test ppl {test_ppl:.3f}.")
+
+        if args.prompt is not None:
+            print("Generating")
+            model.eval()
+
+            if not args.ignore_chat_template and (
+                    hasattr(tokenizer, "apply_chat_template")
+                    and tokenizer.chat_template is not None
+            ):
+                messages = [{"role": "user", "content": args.prompt}]
+                prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            else:
+                prompt = args.prompt
+
+            formatter = colorprint_by_t0 if args.colorize else None
+
+            generate(
+                model, tokenizer, prompt, args.temp, args.max_tokens, True, formatter=formatter
+            )
 
 
 if __name__ == '__main__':
