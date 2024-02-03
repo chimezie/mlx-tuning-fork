@@ -18,8 +18,15 @@ parameters:
     [..]
 ```
 
-An epoch parameter determine the number of iterations if provided (the number needed for a
-full pass of the data, i.e., an epoch).
+* ## **epochs** (How many epochs, i.e., the number of iterations for a full pass of the data)
+* ## **all_linear_layers** (Whether or not to apply (Q)Lora on all linear layers - no by default)
+* ## **reporting_interval_proportion** (The proportion of iterations in an epoch to wait between recording training loss)
+* ## **validation_interval_proportion** (Same proportions for interval between validations - defaults to 0.2 or 20%)
+* ## **validations_per_iteration** (The ration of an epoch's iterations to total validations run - defaults to 1)
+* ## **adapter_save_interval_proportion** (Same proportions for intervals between saving the LoRa adapter - defaults to .1)
+
+There are a few other parameters, but the rest are directly from 
+[mlx-examples](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/tuner/trainer.py#L12).
 
 For now, can be installed by cloning the repository and running (in the local working copy)
 
