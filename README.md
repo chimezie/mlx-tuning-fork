@@ -8,6 +8,7 @@ ability of HF's to [train on completions](https://huggingface.co/docs/trl/sft_tr
 It breaks out argument parameters into a YAML file, a configuration file (the only command line argument) expected 
 in the following format:
 
+```yaml
 parameters:
     model: "..."
     num_tokens: 100
@@ -15,6 +16,7 @@ parameters:
     temp: 0.8
     train: true
     [..]
+```
 
 An epoch parameter determine the number of iterations if provided (the number needed for a
 full pass of the data, i.e., an epoch).
