@@ -1,4 +1,10 @@
-from ogbujipt.prompting import pdelim, format, MISTRAL_INSTRUCTION_DELIMITERS_NO_BOS
+from ogbujipt.prompting import pdelim, format
+
+#https://github.com/OoriData/OgbujiPT/pull/70
+MISTRAL_INSTRUCTION_DELIMITERS_NO_BOS = {
+    pdelim.FIXED_PREAMBLE: '[INST]',
+    pdelim.POSTQUERY: '\n[/INST]',
+}
 
 
 class TrainingRecordHandler:
