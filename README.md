@@ -1,8 +1,8 @@
 # mlx-tuning-fork
 Very basic framework for (see: [mlx-examples PR 235](https://github.com/ml-explore/mlx-examples/pull/235)) parameterized 
-fine-tuning with MLX.  It uses [mlx](https://github.com/ml-explore/mlx), [mlx_lm](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm), 
+large language model (Q)LoRa fine-tuning with MLX.  It uses [mlx](https://github.com/ml-explore/mlx), [mlx_lm](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm), 
 and [OgbujiPT](https://github.com/OoriData/OgbujiPT), and is based primarily on the excellent mlx-example libraries
-but adds much needed architecture for systematic running of easily parameterized finetunes, mainly the equivalent
+but adds much needed architecture (i.e. beyond example code) for systematic running of easily parameterized finetunes, mainly the equivalent
 ability of HF's to [train on completions](https://huggingface.co/docs/trl/sft_trainer#train-on-completions-only). 
 
 It breaks out argument parameters into a YAML file, a configuration file (the only command line argument) expected 
