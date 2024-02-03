@@ -34,3 +34,10 @@ For now, can be installed by cloning the repository and running (in the local wo
 $ pip install .
 ```
 
+Currently just has a single Mistral prompt format (-f/ --prompt-format) module, but with mlx-lm and OgbujiPT you can do something similar with other models:
+
+* Llama
+* Mixtral
+* Qwen
+* [..]
+
