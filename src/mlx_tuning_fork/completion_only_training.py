@@ -110,6 +110,9 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
         prompt_formatter = TrainingRecordHandler
+    elif prompt_format == 'chatml':
+        from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
+        prompt_formatter = TrainingRecordHandler
 
     lora.Dataset = Dataset
 
