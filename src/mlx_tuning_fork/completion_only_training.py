@@ -101,9 +101,11 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
               help='Prompt generation temperature')
 
 @click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral'], case_sensitive=False))
+              type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
+@click.option('-a', '--adapter', default=None, type=str,
+              help='Adapter to use instead of the one specified in the config file')
 @click.argument('config_file')
-def main(verbose, summary, prompt, temperature, prompt_format, config_file):
+def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_file):
     global pbar, prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
@@ -125,6 +127,8 @@ def main(verbose, summary, prompt, temperature, prompt_format, config_file):
             param_dict["train"] = False
             if temperature:
                 param_dict["temperature"] = temperature
+            if adapter:
+                param_dict["adapter_file"] = adapter
         pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
