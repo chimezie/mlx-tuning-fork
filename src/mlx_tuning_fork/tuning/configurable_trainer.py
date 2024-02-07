@@ -11,7 +11,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 from mlx_lm.tuner.trainer import TrainingArgs, default_loss, iterate_batches, save_adapter
-from mlx_tuning_fork.tuning.dynamic_leaning import ConstantLearningRateSchedule, DynamicLearningRateSchedule
+from mlx_tuning_fork.tuning.dynamic_learning import ConstantLearningRateSchedule, DynamicLearningRateSchedule
 
 
 def train(
