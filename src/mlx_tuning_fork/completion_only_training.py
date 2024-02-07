@@ -1,8 +1,8 @@
 import mlx.optimizers as optim
 import numpy as np
 from mlx_lm.tuner.lora import LoRALinear
-from mlx_lm.tuner.trainer import TrainingArgs, evaluate, train
-from mlx_lm.utils import generate, load
+from mlx_lm.tuner.trainer import TrainingArgs, evaluate
+from mlx_lm.utils import load, generate
 from mlx_lm.generate import colorprint_by_t0
 from mlx_lm import lora
 from types import SimpleNamespace
@@ -10,32 +10,16 @@ import mlx.core as mx
 from tqdm import tqdm
 import mlx.nn as nn
 import click
-import re
+import yaml
 import math
 from mlx_tuning_fork.dataset import Dataset
-from mlx_tuning_fork.config import CONFIG_DEFAULTS
-import yaml
-import json
+from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
+from mlx_tuning_fork.tuning.configurable_trainer import train
+from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
+
 import csv
 from pathlib import Path
 from pprint import pprint
-
-#https://stackoverflow.com/questions/30458977/yaml-loads-5e-6-as-string-and-not-a-number
-All = {'one': 1, 'low': 0.000001}
-
-jAll = json.dumps(All)
-
-loader = yaml.SafeLoader
-loader.add_implicit_resolver(
-    u'tag:yaml.org,2002:float',
-    re.compile(u'''^(?:
-     [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
-    |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
-    |\\.[0-9_]+(?:[eE][-+][0-9]+)?
-    |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
-    |[-+]?\\.(?:inf|Inf|INF)
-    |\\.(?:nan|NaN|NAN))$''', re.X),
-    list(u'-+0123456789.'))
 
 
 def completions_only_loss(model, inputs, input_lengths, lengths):
@@ -99,7 +83,6 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
               help='Commandline prompt (overrides) prompt in YAML configuration')
 @click.option('-t', '--temperature', default=None, type=float,
               help='Prompt generation temperature')
-
 @click.option('-f', '--prompt-format',
               type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
@@ -117,7 +100,7 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
     lora.Dataset = Dataset
 
     with open(config_file, "r") as file:
-        config = yaml.load(file, loader)
+        config = yaml.load(file, yaml_loader)
         param_dict = {k: v for k, v in config["parameters"].items()}
         if "model" not in param_dict:
             raise SyntaxError('Missing required "model" parameter')
@@ -144,14 +127,14 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
     model.freeze()
     if args.all_linear_layers:
         print("Using LoRa on all linear layers ..")
-    for l in model.model.layers[len(model.model.layers) - args.lora_layers :]:
-        l.self_attn.q_proj = LoRALinear.from_linear(l.self_attn.q_proj)
-        l.self_attn.v_proj = LoRALinear.from_linear(l.self_attn.v_proj)
+    for layer in model.model.layers[len(model.model.layers) - args.lora_layers :]:
+        layer.self_attn.q_proj = LoRALinear.from_linear(layer.self_attn.q_proj)
+        layer.self_attn.v_proj = LoRALinear.from_linear(layer.self_attn.v_proj)
         if args.all_linear_layers:
-            l.self_attn.k_proj = LoRALinear.from_linear(l.self_attn.k_proj)
-            l.self_attn.o_proj = LoRALinear.from_linear(l.self_attn.o_proj)
-        if hasattr(l, "block_sparse_moe"):
-            l.block_sparse_moe.gate = LoRALinear.from_linear(l.block_sparse_moe.gate)
+            layer.self_attn.k_proj = LoRALinear.from_linear(layer.self_attn.k_proj)
+            layer.self_attn.o_proj = LoRALinear.from_linear(layer.self_attn.o_proj)
+        if hasattr(layer, "block_sparse_moe"):
+            layer.block_sparse_moe.gate = LoRALinear.from_linear(layer.block_sparse_moe.gate)
 
     print("Loading datasets")
     train_set, valid_set, test_set = lora.load_dataset(args)
@@ -181,6 +164,10 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
     )
 
     if not summary:
+
+        scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
+            config["learning_schedule"]["type"]].from_configuration(args.learning_rate, config, num_iterations)
+
         training_args = TrainingArgs(
             batch_size=args.batch_size,
             iters=num_iterations,
@@ -199,12 +186,13 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
             validation_loss = []
             pbar = tqdm(total=num_iterations)
             train(
-                model=model,
-                tokenizer=tokenizer,
+                model,
+                tokenizer,
+                opt,
+                train_set,
+                valid_set,
+                scheduler,
                 args=training_args,
-                optimizer=opt,
-                train_dataset=train_set,
-                val_dataset=valid_set,
                 loss=completions_only_loss,
                 iterate_batches=completions_only_iterate_batches,
                 reported_train_loss_data=train_loss,
