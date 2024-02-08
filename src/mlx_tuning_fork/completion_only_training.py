@@ -15,7 +15,7 @@ import math
 from mlx_tuning_fork.dataset import Dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.tuning.configurable_trainer import train, evaluate
-from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
+from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS, ConstantLearningRateSchedule
 
 import csv
 from pathlib import Path
@@ -169,8 +169,11 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_pr
 
     if not summary:
 
-        scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
-            config["learning_schedule"]["type"]].from_configuration(args.learning_rate, config, num_iterations)
+        if "learning_schedule" in config:
+            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
+                config["learning_schedule"]["type"]].from_configuration(args.learning_rate, config, num_iterations)
+        else:
+            scheduler = ConstantLearningRateSchedule(args.learning_rate, num_iterations)
 
         training_args = TrainingArgs(
             batch_size=args.batch_size,
