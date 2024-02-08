@@ -229,7 +229,7 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_pr
         print(f"Loaded weights from {args.adapter_file}")
 
         if args.test:
-            print("Testing")
+            print(f"Testing ({len(test_set):,} records)")
             model.eval()
 
             test_loss = evaluate(
