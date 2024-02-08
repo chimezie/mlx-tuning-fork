@@ -1,7 +1,7 @@
 import mlx.optimizers as optim
 import numpy as np
 from mlx_lm.tuner.lora import LoRALinear
-from mlx_lm.tuner.trainer import TrainingArgs, evaluate
+from mlx_lm.tuner.trainer import TrainingArgs
 from mlx_lm.utils import load, generate
 from mlx_lm.generate import colorprint_by_t0
 from mlx_lm import lora
@@ -14,7 +14,7 @@ import yaml
 import math
 from mlx_tuning_fork.dataset import Dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
-from mlx_tuning_fork.tuning.configurable_trainer import train
+from mlx_tuning_fork.tuning.configurable_trainer import train, evaluate
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 
 import csv
@@ -87,8 +87,12 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
               type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
               help='Adapter to use instead of the one specified in the config file')
+@click.option('-w', '--wandb-project', default=None, type=str,
+              help='Wandb project for the runto log losses to')
+@click.option('-w', '--wandb-run', default=None, type=str,
+              help='Wandb run for the info logged')
 @click.argument('config_file')
-def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_file):
+def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_project, wandb_run, config_file):
     global pbar, prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
@@ -185,6 +189,12 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
             train_loss = []
             validation_loss = []
             pbar = tqdm(total=num_iterations)
+
+            if wandb_project:
+                assert wandb_run is not None
+                import wandb
+                wandb.init(project=wandb_project, name=wandb_run, config=config_file)
+
             train(
                 model,
                 tokenizer,
@@ -196,7 +206,8 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
                 loss=completions_only_loss,
                 iterate_batches=completions_only_iterate_batches,
                 reported_train_loss_data=train_loss,
-                validation_loss_data=validation_loss
+                validation_loss_data=validation_loss,
+                wandb_logging=wandb_project is not None
             )
             if args.train_loss_file:
                 with Path(args.train_loss_file).open('a') as csvfile:
@@ -213,7 +224,6 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
         if not Path(args.adapter_file).is_file():
             raise ValueError(
                 f"Adapter file {args.adapter_file} missing. "
-                "Use --train to learn and save the adapters.npz."
             )
         model.load_weights(args.adapter_file, strict=False)
         print(f"Loaded weights from {args.adapter_file}")
@@ -228,6 +238,8 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, config_f
                 tokenizer=tokenizer,
                 batch_size=args.batch_size,
                 num_batches=args.test_batches,
+                loss=completions_only_loss,
+                iterate_batches=completions_only_iterate_batches
             )
 
             test_ppl = math.exp(test_loss)

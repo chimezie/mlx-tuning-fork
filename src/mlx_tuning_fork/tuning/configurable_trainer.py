@@ -11,7 +11,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 from mlx_lm.tuner.trainer import TrainingArgs, default_loss, iterate_batches, save_adapter
-from mlx_tuning_fork.tuning.dynamic_learning import ConstantLearningRateSchedule, DynamicLearningRateSchedule
+from mlx_tuning_fork.tuning.dynamic_learning import DynamicLearningRateSchedule
 
 
 def train(
@@ -25,7 +25,8 @@ def train(
     loss: callable = default_loss,
     iterate_batches: callable = iterate_batches,
     reported_train_loss_data: List = None,
-    validation_loss_data: List = None
+    validation_loss_data: List = None,
+    wandb_logging: bool = False
 ):
     # Create value and grad function for loss
     loss_value_and_grad = nn.value_and_grad(model, loss)
@@ -61,6 +62,9 @@ def train(
         losses.append(lvalue.item())
         n_tokens += toks.item()
 
+        if it == 0:
+            print(f"Starting learning rate: {optimizer.learning_rate}")
+
         # Report training loss if needed
         if (it + 1) % args.steps_per_report == 0:
             train_loss = np.mean(losses)
@@ -70,11 +74,23 @@ def train(
             num_tokens_per_sec = float(n_tokens) / (stop - start)
             print(
                 f"Iter {it + 1}: Train loss {train_loss:.3f}, "
-                f"It/sec {iters_per_sec :.3f}, "
+                f"It/sec {iters_per_sec :.3f}, "# Report validation loss if needed
                 f"Tokens/sec {num_tokens_per_sec :.3f}, "
                 f"Learning rate {optimizer.learning_rate}, "
             )
-            if reported_train_loss_data is not None:
+            if wandb_logging:
+                import wandb
+                try:
+                    wandb.log(
+                        {
+                            "iter": it + 1,
+                            "loss/train": train_loss,
+                            "learning_rate": optimizer.learning_rate,
+                        }, step=it + 1
+                    )
+                except Exception as e:
+                    print(f"logging to wandb failed: {e}")
+            elif reported_train_loss_data is not None:
                 reported_train_loss_data.append((it, train_loss, iters_per_sec, num_tokens_per_sec))
             losses = []
             n_tokens = 0
@@ -99,7 +115,19 @@ def train(
                 f"Val loss {val_loss:.3f}, "
                 f"Val took {val_run_time :.3f}s"
             )
-            if validation_loss_data is not None:
+            if wandb_logging:
+                import wandb
+                try:
+                    wandb.log(
+                        {
+                            "iter": it + 1,
+                            "loss/val": val_loss,
+                            "learning_rate": optimizer.learning_rate,
+                        }, step=it + 1
+                    )
+                except Exception as e:
+                    print(f"logging to wandb failed: {e}")
+            elif validation_loss_data is not None:
                 validation_loss_data.append((it, val_loss, val_run_time))
             start = time.perf_counter()
 
