@@ -87,9 +87,9 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
               type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
               help='Adapter to use instead of the one specified in the config file')
-@click.option('-w', '--wandb-project', default=None, type=str,
+@click.option('--wandb-project', default=None, type=str,
               help='Wandb project for the runto log losses to')
-@click.option('-w', '--wandb-run', default=None, type=str,
+@click.option('--wandb-run', default=None, type=str,
               help='Wandb run for the info logged')
 @click.argument('config_file')
 def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_project, wandb_run, config_file):
