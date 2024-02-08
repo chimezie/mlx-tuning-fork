@@ -112,7 +112,7 @@ class LinearWarmUp:
             return self.schedule.update(iteration - self.length)
 
     def __str__(self):
-        return f"{self.schedule} w/ linear warmup from {self.start_lr} for {self.length} steps"
+        return f"{self.schedule} w/ linear warmup from {self.start_lr} to {self.finish_lr} for {self.length:,} steps"
 
 
 class LinearCoolDown:
