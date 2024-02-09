@@ -196,7 +196,7 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_pr
             if wandb_project:
                 assert wandb_run is not None
                 import wandb
-                wandb.init(project=wandb_project, name=wandb_run, config=config_file)
+                wandb.init(project=wandb_project, name=wandb_run, config=config)
 
             train(
                 model,

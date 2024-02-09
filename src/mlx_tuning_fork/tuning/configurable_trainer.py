@@ -48,7 +48,8 @@ def train(
         ),
     ):
         #Update the learning rate from the scheduler
-        optimizer.learning_rate = learning_rate_schedule.update(it)
+        learning_rate = learning_rate_schedule.update(it)
+        optimizer.learning_rate = mx.array(learning_rate)
 
         # Forward and backward pass
         (lvalue, toks), grad = loss_value_and_grad(model, *batch)
@@ -63,7 +64,7 @@ def train(
         n_tokens += toks.item()
 
         if it == 0:
-            print(f"Starting learning rate: {optimizer.learning_rate}")
+            print(f"Starting learning rate: {optimizer.learning_rate.item()}")
 
         # Report training loss if needed
         if (it + 1) % args.steps_per_report == 0:
@@ -80,16 +81,12 @@ def train(
             )
             if wandb_logging:
                 import wandb
-                try:
-                    wandb.log(
-                        {
-                            "iter": it + 1,
-                            "loss/train": train_loss,
-                            "learning_rate": optimizer.learning_rate,
-                        }, step=it + 1
-                    )
-                except Exception as e:
-                    print(f"logging to wandb failed: {e}")
+                wandb.log(
+                    {
+                        "loss/train": float(train_loss),
+                        "learning_rate": optimizer.learning_rate.item(),
+                    }, step=it + 1
+                )
             elif reported_train_loss_data is not None:
                 reported_train_loss_data.append((it, train_loss, iters_per_sec, num_tokens_per_sec))
             losses = []
@@ -117,16 +114,12 @@ def train(
             )
             if wandb_logging:
                 import wandb
-                try:
-                    wandb.log(
-                        {
-                            "iter": it + 1,
-                            "loss/val": val_loss,
-                            "learning_rate": optimizer.learning_rate,
-                        }, step=it + 1
-                    )
-                except Exception as e:
-                    print(f"logging to wandb failed: {e}")
+                wandb.log(
+                    {
+                        "loss/val": float(val_loss),
+                        "learning_rate": optimizer.learning_rate.item(),
+                    }, step=it + 1
+                )
             elif validation_loss_data is not None:
                 validation_loss_data.append((it, val_loss, val_run_time))
             start = time.perf_counter()
