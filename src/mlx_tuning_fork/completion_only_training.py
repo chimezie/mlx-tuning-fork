@@ -127,8 +127,13 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_pr
     # if args.eos_token is not None:
     #     tokenizer_config["eos_token"] = args.eos_token
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
-
     model.freeze()
+
+    if wandb_project:
+        assert wandb_run is not None
+        import wandb
+        wandb.init(project=wandb_project, name=wandb_run, config=config)
+
     if args.all_linear_layers:
         print("Using LoRa on all linear layers ..")
     for layer in model.model.layers[len(model.model.layers) - args.lora_layers :]:
@@ -192,11 +197,6 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_pr
             train_loss = []
             validation_loss = []
             pbar = tqdm(total=num_iterations)
-
-            if wandb_project:
-                assert wandb_run is not None
-                import wandb
-                wandb.init(project=wandb_project, name=wandb_run, config=config)
 
             train(
                 model,
