@@ -208,37 +208,56 @@ class OneCycleSchedule(DynamicLearningRateSchedule):
 
 
 class CyclicalSchedule(DynamicLearningRateSchedule):
-    def __init__(self, schedule_class: Type, cycle_length: int, cycle_length_decay: float = 1,
-                 cycle_magnitude_decay: float = 1, **kwargs) -> None:
+    def __init__(self, schedule_class: Type, cycle_length: int, initial_cycle_length: int,
+                 cycle_length_decay: float = 1, cycle_magnitude_decay: float = 1, warmup_start_lr: float = 0,
+                 warmup_length: int = -1, **kwargs) -> None:
         """
-        We implement a wrapper class that loops existing cycle-based schedules such as TriangularSchedule and
-        CosineAnnealingSchedule to provide infinitely repeating schedules.
+        Modified to include warmup linear parameters and initial cycle length, per SGD paper:
+        "In order to improve anytime performance, we suggest an option to start with an initially small Ti
+        and increase it by a factor of Tmult at every restart"
+
+        We implement a wrapper class that loops existing cycle-based schedules [..] to provide infinitely repeating
+        schedules.
 
         We pass the schedule class (rather than an instance) because one feature of the CyclicalSchedule is to vary the
         cycle_length over time as seen in Ilya Loshchilov, Frank Hutter (2016) using cycle_length_decay.
         Another feature is the ability to decay the cycle magnitude over time with cycle_magnitude_decay.
 
         :param schedule_class: class of schedule, expected to take `cycle_length` argument
-        :param cycle_length: iterations used for initial cycle (int)
-        :param cycle_length_decay: factor multiplied to cycle_length each cycle (float)
-        :param cycle_magnitude_decay: factor multiplied learning rate magnitudes each cycle (float)
+        :param cycle_length: iterations used for each cycle (int)
+        :param initial_cycle_length: Initial cycle length (cycle_length is used for others)
+        :param cycle_length_decay: factor multiplied to cycle_length each cycle (float - defaults to 1)
+        :param cycle_magnitude_decay: factor multiplied with learning rate magnitudes each cycle (float - defaults to 1)
+        :param warmup_start_lr: learning rate used at start of the warm-up (float - defaults to 0)
+        :param warmup_length: number of iterations used for the warm-up (int) - Default is -1: no warmup
         :param kwargs: passed to the schedule_class
         """
         self.schedule_class = schedule_class
         self.length = cycle_length
+        self.initial_cycle_length = initial_cycle_length
         self.length_decay = cycle_length_decay
         self.magnitude_decay = cycle_magnitude_decay
         self.kwargs = kwargs
+        self.warmup_start_lr = warmup_start_lr
+        self.warmup_length = warmup_length
 
     def update(self, iteration: int) -> float:
+        learning_rate = self.kwargs['learning_rate' if 'learning_rate' in self.kwargs else 'max_lr']
+        if self.warmup_length != -1 and iteration <= self.warmup_length:
+            return iteration * ((learning_rate - self.warmup_start_lr) / self.warmup_length) + self.warmup_start_lr
+        elif self.warmup_length != -1:
+            _iteration = iteration - self.warmup_length
+        else:
+            _iteration = iteration
+
         cycle_idx = 0
         cycle_length = self.length
         idx = self.length
-        while idx <= iteration:
-            cycle_length = math.ceil(cycle_length * self.length_decay)
+        while idx <= _iteration:
+            cycle_length = self.initial_cycle_length if cycle_idx == 0 else math.ceil(cycle_length * self.length_decay)
             cycle_idx += 1
             idx += cycle_length
-        cycle_offset = iteration - idx + cycle_length
+        cycle_offset = _iteration - idx + cycle_length
 
         schedule = self.schedule_class(cycle_length=cycle_length, **self.kwargs)
         return schedule.update(cycle_offset) * self.magnitude_decay**cycle_idx
@@ -257,8 +276,23 @@ class CosineWithWarmup:
         return LinearWarmUp(schedule, param_dict["start_lr"], length)
 
 
+class SGDRWithWarmup:
+    @classmethod
+    def from_configuration(cls, learning_rate, config, total_iterations):
+        param_dict = {k: v for k, v in config["learning_schedule"].items() if k != "type"}
+        if "max_lr" not in param_dict:
+            param_dict["max_lr"] = learning_rate
+        param_dict["total_iterations"] = total_iterations
+        cycle_length = param_dict["cycle_length"]
+        initial_cycle_length = param_dict["initial_cycle_length"]
+        del param_dict["cycle_length"]
+        del param_dict["initial_cycle_length"]
+        return CyclicalSchedule(CosineAnnealingSchedule, cycle_length, initial_cycle_length, **param_dict)
+
+
 SCHEDULE_CONFIGURATION_TYPE_TO_CLASS = {
     "cosine": CosineAnnealingSchedule,
     "cosine_w_warmup": CosineWithWarmup,
-    "constant": ConstantLearningRateSchedule
+    "constant": ConstantLearningRateSchedule,
+    "sgdr_w_warmup": SGDRWithWarmup
 }
