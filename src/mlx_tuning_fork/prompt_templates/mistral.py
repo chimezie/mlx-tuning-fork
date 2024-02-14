@@ -1,5 +1,5 @@
 from ogbujipt.prompting import pdelim, format
-from types import Dict
+from typing import Dict
 
 #https://github.com/OoriData/OgbujiPT/pull/70
 MISTRAL_INSTRUCTION_DELIMITERS_NO_BOS = {
