@@ -1,7 +1,7 @@
 import mlx.optimizers as optim
 import numpy as np
 from mlx_lm.tuner.lora import LoRALinear
-from mlx_lm.tuner.trainer import TrainingArgs
+from mlx_lm.tuner.trainer import TrainingArgs, default_loss
 from mlx_lm.utils import load, generate
 from mlx_lm.generate import colorprint_by_t0
 from mlx_lm import lora
@@ -16,6 +16,8 @@ from mlx_tuning_fork.dataset import Dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.tuning.configurable_trainer import train, evaluate
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS, ConstantLearningRateSchedule
+from ogbujipt import word_loom
+from ogbujipt.prompting import format
 
 import csv
 from pathlib import Path
@@ -76,13 +78,66 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
             break
 
 
+def iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
+    while True:
+        # Shuffle indices
+        indices = np.arange(len(dataset))
+        indices = np.random.permutation(indices)
+        # Collect batches from dataset
+        for i in range(0, len(indices) - batch_size + 1, batch_size):
+            # Encode batch
+            batch = [
+                tokenizer.encode(
+                    prompt_formatter.get_input(dataset[indices[i + j]]) +
+                    prompt_formatter.get_output(dataset[indices[i + j]])
+                ) for j in range(batch_size)
+            ]
+            lengths = [len(x) for x in batch]
+
+            if max(lengths) > max_seq_length:
+                print(
+                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
+                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
+                    "Consider pre-splitting your data to save memory."
+                )
+
+            # Pad to the max length
+            max_length_in_batch = min(max(lengths), max_seq_length)
+            batch_arr = np.zeros((batch_size, max_length_in_batch), np.int32)
+
+            for j in range(batch_size):
+                truncated_length = min(lengths[j], max_seq_length)
+                batch_arr[j, :truncated_length] = batch[j][:truncated_length]
+                lengths[j] = (
+                    truncated_length  # Update lengths to match truncated lengths
+                )
+            batch = mx.array(batch_arr)
+
+            yield batch[:, :-1], batch[:, 1:], mx.array(lengths)
+
+        if not train:
+            break
+
+
+def generate_prompt_from_loom(loom_file, prompt_formatter):
+    with open(loom_file, mode='rb') as fp:
+        loom = word_loom.load(fp)
+        question = loom['question']
+        system = loom['system_prompt']
+        extra_context = loom['context']
+        return format(question, preamble=system, contexts=extra_context, delimiters=prompt_formatter.get_delimiters())
+
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
+@click.option("--loom-file", help="An OgbujiPT word loom file to use for prompt construction")
 @click.option('-p', '--prompt', default=None, type=str,
               help='Commandline prompt (overrides) prompt in YAML configuration')
 @click.option('-t', '--temperature', default=None, type=float,
               help='Prompt generation temperature')
+@click.option('--train-type',
+              type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
+              default="completion-only")
 @click.option('-f', '--prompt-format',
               type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
@@ -92,7 +147,8 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run for the info logged')
 @click.argument('config_file')
-def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_project, wandb_run, config_file):
+def main(verbose, summary, loom_file, prompt, temperature, train_type, prompt_format, adapter, wandb_project, wandb_run,
+         config_file):
     global pbar, prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
@@ -112,13 +168,17 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_pr
             if key not in param_dict:
                 param_dict[key] = default
         param_dict["verbose"] = verbose
+        if loom_file:
+            param_dict["prompt"] = generate_prompt_from_loom(loom_file, prompt_formatter)
+            param_dict["test"] = param_dict["train"] = False
+            param_dict["ignore_chat_template"] = True
         if prompt:
             param_dict["prompt"] = prompt
-            param_dict["train"] = False
-            if temperature:
-                param_dict["temperature"] = temperature
-            if adapter:
-                param_dict["adapter_file"] = adapter
+            param_dict["test"] = param_dict["train"] = False
+        if temperature:
+            param_dict["temperature"] = temperature
+        if adapter:
+            param_dict["adapter_file"] = adapter
         pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
@@ -206,8 +266,9 @@ def main(verbose, summary, prompt, temperature, prompt_format, adapter, wandb_pr
                 valid_set,
                 scheduler,
                 args=training_args,
-                loss=completions_only_loss,
-                iterate_batches=completions_only_iterate_batches,
+                loss=completions_only_loss if train_type == 'completion-only' else default_loss,
+                iterate_batches=completions_only_iterate_batches if train_type == 'completion-only'
+                else iterate_batches,
                 reported_train_loss_data=train_loss,
                 validation_loss_data=validation_loss,
                 wandb_logging=wandb_project is not None

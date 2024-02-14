@@ -1,4 +1,5 @@
 from ogbujipt.prompting import pdelim, format
+from types import Dict
 
 #https://github.com/OoriData/OgbujiPT/pull/70
 MISTRAL_INSTRUCTION_DELIMITERS_NO_BOS = {
@@ -10,8 +11,12 @@ MISTRAL_INSTRUCTION_DELIMITERS_NO_BOS = {
 class TrainingRecordHandler:
     @classmethod
     def get_input(cls, record) -> str:
-        return format(record["input"], delimiters=MISTRAL_INSTRUCTION_DELIMITERS_NO_BOS)
+        return format(record["input"], delimiters=cls.get_delimiters())
 
     @classmethod
     def get_output(cls, record) -> str:
         return record["output"]
+
+    @classmethod
+    def get_delimiters(cls) -> Dict:
+        return MISTRAL_INSTRUCTION_DELIMITERS_NO_BOS
