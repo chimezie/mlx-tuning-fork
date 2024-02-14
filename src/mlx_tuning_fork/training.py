@@ -135,6 +135,8 @@ def generate_prompt_from_loom(loom_file, prompt_formatter):
               help='Commandline prompt (overrides) prompt in YAML configuration')
 @click.option('-t', '--temperature', default=None, type=float,
               help='Prompt generation temperature')
+@click.option('-nt', '--num-tokens', default=-1, type=int,
+              help='Overide number of tokens in config file')
 @click.option('--train-type',
               type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
               default="completion-only")
@@ -143,12 +145,12 @@ def generate_prompt_from_loom(loom_file, prompt_formatter):
 @click.option('-a', '--adapter', default=None, type=str,
               help='Adapter to use instead of the one specified in the config file')
 @click.option('--wandb-project', default=None, type=str,
-              help='Wandb project for the runto log losses to')
+              help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
-              help='Wandb run for the info logged')
+              help='Wandb run name')
 @click.argument('config_file')
-def main(verbose, summary, loom_file, prompt, temperature, train_type, prompt_format, adapter, wandb_project, wandb_run,
-         config_file):
+def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_type, prompt_format, adapter,
+         wandb_project, wandb_run, config_file):
     global pbar, prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
@@ -179,6 +181,8 @@ def main(verbose, summary, loom_file, prompt, temperature, train_type, prompt_fo
             param_dict["temperature"] = temperature
         if adapter:
             param_dict["adapter_file"] = adapter
+        if num_tokens and num_tokens != -1:
+            param_dict["num_tokens"] = num_tokens
         pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
