@@ -129,8 +129,8 @@ def generate_prompt_from_loom(loom_file, prompt_formatter):
     with open(loom_file, mode='rb') as fp:
         loom = word_loom.load(fp)
         question = loom['question']
-        system = loom['system_prompt']
-        extra_context = loom['context']
+        system = loom.get('system_prompt', '')
+        extra_context = loom.get('context', '')
         return format(question, preamble=system, contexts=extra_context, delimiters=prompt_formatter.get_delimiters())
 
 @click.command()
@@ -154,7 +154,7 @@ def generate_prompt_from_loom(loom_file, prompt_formatter):
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
-@click.option('--repetition-penalty', default=0, type=float,
+@click.option('-rp', '--repetition-penalty', default=0, type=float,
               help='The penalty factor for repeating tokens (none if not used)')
 @click.option('--repetition-context-size', default=20, type=int,
               help='The number of tokens to consider for repetition penalty')
