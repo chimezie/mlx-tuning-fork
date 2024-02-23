@@ -8,7 +8,7 @@ import yaml
 import math
 from abc import ABC
 from typing import Type
-from mlx_tuning_fork.config import yaml_loader
+import mlx.optimizers.schedulers as mlx_schedulers
 
 
 class DynamicLearningRateSchedule(ABC):
@@ -36,7 +36,7 @@ class ConstantLearningRateSchedule(DynamicLearningRateSchedule):
 
     @classmethod
     def from_configuration(cls, learning_rate, config, total_iterations):
-        return cls(learning_rate, total_iterations)
+        return learning_rate
 
     def __str__(self):
         return f"ConstantLearningRateSchedule: {self.learning_rate})"
@@ -270,11 +270,13 @@ class CosineWithWarmup:
         min_lr = param_dict["min_lr"]
         max_lr = param_dict["max_lr"] if "max_lr" in param_dict else learning_rate
         cycle_length = param_dict["cycle_length"]
-        schedule = CosineAnnealingSchedule(min_lr, max_lr, cycle_length, total_iterations)
+        cycle_length = total_iterations if cycle_length == -1 else cycle_length
         length = param_dict["length"] if "length" in param_dict else int(param_dict["warmup_proportion"] *
                                                                          total_iterations)
-        return LinearWarmUp(schedule, param_dict["start_lr"], length)
-
+        warmup_schedule = mlx_schedulers.linear_warmup(length, max_lr, init=min_lr)
+        cosine_schedule = mlx_schedulers.cosine_decay(max_lr, cycle_length)
+        cosine_w_warmup_schedule = mlx_schedulers.ScheduleJoiner([warmup_schedule, cosine_schedule], [length])
+        return cosine_w_warmup_schedule
 
 class SGDRWithWarmup:
     @classmethod
@@ -291,8 +293,8 @@ class SGDRWithWarmup:
 
 
 SCHEDULE_CONFIGURATION_TYPE_TO_CLASS = {
-    "cosine": CosineAnnealingSchedule,
+    #"cosine": CosineAnnealingSchedule,
     "cosine_w_warmup": CosineWithWarmup,
     "constant": ConstantLearningRateSchedule,
-    "sgdr_w_warmup": SGDRWithWarmup
+    #"sgdr_w_warmup": SGDRWithWarmup
 }

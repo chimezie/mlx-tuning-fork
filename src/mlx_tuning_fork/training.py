@@ -1,7 +1,7 @@
 import mlx.optimizers as optim
 import numpy as np
 from mlx_lm.tuner.lora import LoRALinear
-from mlx_lm.tuner.trainer import TrainingArgs, default_loss
+from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train
 from mlx_lm.utils import load, generate
 from mlx_lm.generate import colorprint_by_t0
 from mlx_lm import lora
@@ -14,7 +14,7 @@ import yaml
 import math
 from mlx_tuning_fork.dataset import Dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
-from mlx_tuning_fork.tuning.configurable_trainer import train, evaluate
+from mlx_tuning_fork.reporting import WandbCallback
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS, ConstantLearningRateSchedule
 from ogbujipt import word_loom
 from ogbujipt.prompting import format
@@ -61,13 +61,19 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
             full_labels = [input_batch[idx] + output_batch[idx] for idx in range(batch_size)]
             lengths = [len(x) for x in full_labels]
 
-            max_width = max(lengths)
-            assert max_width < 2048
+            if max(lengths) > max_seq_length:
+                print(
+                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
+                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
+                    "Consider pre-splitting your data to save memory."
+                )
+
+            max_width = min(max(lengths), max_seq_length)
 
             batch_arr = np.zeros((batch_size, max_width), np.int32)
             for j in range(batch_size):
                 input_length = input_lengths[j]
-                full_ids_end_idx = input_length + output_lengths[j]
+                full_ids_end_idx = input_length + min(output_lengths[j], max_seq_length - input_length)
                 batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
             batch = mx.array(batch_arr)
             if train:
@@ -148,9 +154,13 @@ def generate_prompt_from_loom(loom_file, prompt_formatter):
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
+@click.option('--repetition-penalty', default=0, type=float,
+              help='The penalty factor for repeating tokens (none if not used)')
+@click.option('--repetition-context-size', default=20, type=int,
+              help='The number of tokens to consider for repetition penalty')
 @click.argument('config_file')
 def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_type, prompt_format, adapter,
-         wandb_project, wandb_run, config_file):
+         wandb_project, wandb_run, config_file, repetition_penalty, repetition_context_size):
     global pbar, prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
@@ -193,10 +203,12 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
     model.freeze()
 
+    training_callback = None
     if wandb_project:
         assert wandb_run is not None
         import wandb
         wandb.init(project=wandb_project, name=wandb_run, config=config)
+        training_callback = WandbCallback()
 
     if args.all_linear_layers:
         print("Using LoRa on all linear layers ..")
@@ -242,7 +254,7 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
             scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
                 config["learning_schedule"]["type"]].from_configuration(args.learning_rate, config, num_iterations)
         else:
-            scheduler = ConstantLearningRateSchedule(args.learning_rate, num_iterations)
+            scheduler = args.learning_rate
 
         training_args = TrainingArgs(
             batch_size=args.batch_size,
@@ -257,7 +269,7 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
         if args.train:
             print("Training")
             model.train()
-            opt = optim.Adam(learning_rate=args.learning_rate)
+            opt = optim.Adam(learning_rate=scheduler)
             train_loss = []
             validation_loss = []
             pbar = tqdm(total=num_iterations)
@@ -268,14 +280,11 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
                 opt,
                 train_set,
                 valid_set,
-                scheduler,
                 args=training_args,
                 loss=completions_only_loss if train_type == 'completion-only' else default_loss,
                 iterate_batches=completions_only_iterate_batches if train_type == 'completion-only'
                 else iterate_batches,
-                reported_train_loss_data=train_loss,
-                validation_loss_data=validation_loss,
-                wandb_logging=wandb_project is not None
+                training_callback=training_callback
             )
             if args.train_loss_file:
                 with Path(args.train_loss_file).open('a') as csvfile:
@@ -330,7 +339,9 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
             formatter = colorprint_by_t0 if args.colorize else None
 
             generate(
-                model, tokenizer, prompt, args.temp, args.max_tokens, True, formatter=formatter
+                model, tokenizer, prompt, args.temp, args.max_tokens, True, formatter=formatter,
+                repetition_penalty=repetition_penalty,
+                repetition_context_size=repetition_context_size
             )
 
 

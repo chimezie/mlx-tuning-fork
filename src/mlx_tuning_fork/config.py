@@ -33,6 +33,7 @@ CONFIG_DEFAULTS = {
     "adapter_file": "adapters.npz",
     "test": False,
     "test_batches": 500,
+    "max_seq_length": 2048,
     "seed": 0,
     "max_tokens": 100,
     "tokens_per_eval": 10,
