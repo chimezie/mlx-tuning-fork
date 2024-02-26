@@ -125,12 +125,33 @@ def iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False)
             break
 
 
-def generate_prompt_from_loom(loom_file, prompt_formatter):
+def generate_prompt_from_loom(loom_file, prompt_formatter, build_prompt):
     with open(loom_file, mode='rb') as fp:
         loom = word_loom.load(fp)
-        question = loom['question']
-        system = loom.get('system_prompt', '')
-        extra_context = loom.get('context', '')
+        if build_prompt is not None:
+            loom_sections = build_prompt.split(' ')
+            num_loom_sections = len(loom_sections)
+            if num_loom_sections not in [1, 2, 3]:
+                raise click.BadParameter("Expected: 1-3 loom section names separated by space")
+            elif num_loom_sections == 1:
+                system_section = 'system_prompt'
+                extra_context_section = 'context'
+                question_section = loom_sections[0]
+            elif num_loom_sections == 2:
+                system_section = loom_sections[0]
+                extra_context_section = 'context'
+                question_section = loom_sections[1]
+            else:
+                system_section = loom_sections[0]
+                extra_context_section = loom_sections[1]
+                question_section = loom_sections[2]
+        else:
+            system_section = 'system_prompt'
+            extra_context_section = 'context'
+            question_section = 'question'
+        question = loom[question_section]
+        system = loom.get(system_section, '')
+        extra_context = loom.get(extra_context_section, '')
         return format(question, preamble=system, contexts=extra_context, delimiters=prompt_formatter.get_delimiters())
 
 @click.command()
@@ -158,9 +179,14 @@ def generate_prompt_from_loom(loom_file, prompt_formatter):
               help='The penalty factor for repeating tokens (none if not used)')
 @click.option('--repetition-context-size', default=20, type=int,
               help='The number of tokens to consider for repetition penalty')
+@click.option('-tp', '--top-p', default=generate.DEFAULT_TOP_P, type=float,
+              help='Sampling top-p')
+@click.option('--build-prompt', default=None, type=str,
+              help='Which woord loom sections to use in building the claim (space-separated list of sections)')
 @click.argument('config_file')
 def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_type, prompt_format, adapter,
-         wandb_project, wandb_run, config_file, repetition_penalty, repetition_context_size):
+         wandb_project, wandb_run, repetition_penalty, repetition_context_size, top_p, config_file,
+         build_prompt):
     global pbar, prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
@@ -181,7 +207,7 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
                 param_dict[key] = default
         param_dict["verbose"] = verbose
         if loom_file:
-            param_dict["prompt"] = generate_prompt_from_loom(loom_file, prompt_formatter)
+            param_dict["prompt"] = generate_prompt_from_loom(loom_file, prompt_formatter, build_prompt)
             param_dict["test"] = param_dict["train"] = False
             param_dict["ignore_chat_template"] = True
         if prompt:
@@ -341,7 +367,8 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
             generate(
                 model, tokenizer, prompt, args.temp, args.max_tokens, True, formatter=formatter,
                 repetition_penalty=repetition_penalty,
-                repetition_context_size=repetition_context_size
+                repetition_context_size=repetition_context_size,
+                top_p=top_p
             )
 
 

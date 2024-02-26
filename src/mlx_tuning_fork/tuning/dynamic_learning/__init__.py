@@ -275,7 +275,7 @@ class CosineWithWarmup:
                                                                          total_iterations)
         warmup_schedule = mlx_schedulers.linear_warmup(length, max_lr, init=min_lr)
         cosine_schedule = mlx_schedulers.cosine_decay(max_lr, cycle_length)
-        cosine_w_warmup_schedule = mlx_schedulers.ScheduleJoiner([warmup_schedule, cosine_schedule], [length])
+        cosine_w_warmup_schedule = mlx_schedulers.join_schedules([warmup_schedule, cosine_schedule], [length])
         return cosine_w_warmup_schedule
 
 class SGDRWithWarmup:
