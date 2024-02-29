@@ -273,7 +273,7 @@ class CosineWithWarmup:
         cycle_length = total_iterations if cycle_length == -1 else cycle_length
         length = param_dict["length"] if "length" in param_dict else int(param_dict["warmup_proportion"] *
                                                                          total_iterations)
-        warmup_schedule = mlx_schedulers.linear_warmup(length, max_lr, init=min_lr)
+        warmup_schedule = mlx_schedulers.linear_schedule(min_lr, max_lr, length)
         cosine_schedule = mlx_schedulers.cosine_decay(max_lr, cycle_length)
         cosine_w_warmup_schedule = mlx_schedulers.join_schedules([warmup_schedule, cosine_schedule], [length])
         return cosine_w_warmup_schedule
