@@ -22,7 +22,8 @@ parameters:
 * **all_linear_layers** (Whether or not to apply (Q)Lora on all linear layers - no by default)
 * **reporting_interval_proportion** (The proportion of iterations in an epoch to wait between recording training loss)
 * **validation_interval_proportion** (Same proportions for interval between validations - defaults to 0.2 or 20%)
-* **validations_per_iteration** (The ration of an epoch's iterations to total validations run - defaults to 1)
+* **validations_per_train_item** (The ration of the number of validation per training record seen - defaults 
+* to .5 or 1 validation per 2 training records)
 * **adapter_save_interval_proportion** (Same proportions for intervals between saving the LoRa adapter - defaults to .1)
 
 There are a few other tuning parameters, but the rest are directly from 

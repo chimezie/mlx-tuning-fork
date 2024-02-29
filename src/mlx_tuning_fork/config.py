@@ -43,7 +43,7 @@ CONFIG_DEFAULTS = {
     "validation_scale": 5,
     "reporting_interval_proportion": 0.01, #10/1000
     "validation_interval_proportion": 0.2, #200/1000
-    "validations_per_iteration": 1,
+    "validations_per_train_item": .5,
     "adapter_save_interval_proportion": .1,
     "train_loss_file": None,
     "validation_loss_file": None,

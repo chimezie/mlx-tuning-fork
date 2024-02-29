@@ -268,8 +268,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
 
     scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
     scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
-    scaled_val_batches = int(args.validations_per_iteration * args.validation_interval_proportion * num_iterations
-                             / args.batch_size)
+    scaled_val_batches = int(args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
     scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
 
     print(
