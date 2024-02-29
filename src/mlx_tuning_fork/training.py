@@ -125,7 +125,7 @@ def iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False)
             break
 
 
-def generate_prompt_from_loom(loom_file, prompt_formatter, build_prompt):
+def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_prompt):
     with open(loom_file, mode='rb') as fp:
         loom = word_loom.load(fp)
         if build_prompt is not None:
@@ -152,12 +152,16 @@ def generate_prompt_from_loom(loom_file, prompt_formatter, build_prompt):
         question = loom[question_section]
         system = loom.get(system_section, '')
         extra_context = loom.get(extra_context_section, '')
+        if loom_markers is not None:
+            marker, value = loom_markers.split('=')
+            question = question.format(**{marker: value[1:-1]})
         return format(question, preamble=system, contexts=extra_context, delimiters=prompt_formatter.get_delimiters())
 
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
 @click.option("--loom-file", help="An OgbujiPT word loom file to use for prompt construction")
+@click.option("--loom-markers", help="Loom marker values", default=None, type=str)
 @click.option('-p', '--prompt', default=None, type=str,
               help='Commandline prompt (overrides) prompt in YAML configuration')
 @click.option('-t', '--temperature', default=None, type=float,
@@ -179,12 +183,12 @@ def generate_prompt_from_loom(loom_file, prompt_formatter, build_prompt):
               help='The penalty factor for repeating tokens (none if not used)')
 @click.option('--repetition-context-size', default=20, type=int,
               help='The number of tokens to consider for repetition penalty')
-@click.option('-tp', '--top-p', default=generate.DEFAULT_TOP_P, type=float,
+@click.option('-tp', '--top-p', default=CONFIG_DEFAULTS["top_p"], type=float,
               help='Sampling top-p')
 @click.option('--build-prompt', default=None, type=str,
-              help='Which woord loom sections to use in building the claim (space-separated list of sections)')
+              help='Which word loom sections to use in building the claim (space-separated list of sections)')
 @click.argument('config_file')
-def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_type, prompt_format, adapter,
+def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tokens, train_type, prompt_format, adapter,
          wandb_project, wandb_run, repetition_penalty, repetition_context_size, top_p, config_file,
          build_prompt):
     global pbar, prompt_formatter
@@ -207,7 +211,7 @@ def main(verbose, summary, loom_file, prompt, temperature, num_tokens, train_typ
                 param_dict[key] = default
         param_dict["verbose"] = verbose
         if loom_file:
-            param_dict["prompt"] = generate_prompt_from_loom(loom_file, prompt_formatter, build_prompt)
+            param_dict["prompt"] = generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_prompt)
             param_dict["test"] = param_dict["train"] = False
             param_dict["ignore_chat_template"] = True
         if prompt:
