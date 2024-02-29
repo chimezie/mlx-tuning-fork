@@ -1,4 +1,4 @@
-from mlx_lm.utils import generate
+from mlx_lm import generate
 import yaml
 import re
 
