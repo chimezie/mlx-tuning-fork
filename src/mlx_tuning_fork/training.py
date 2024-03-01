@@ -15,7 +15,7 @@ import math
 from mlx_tuning_fork.dataset import Dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS, ConstantLearningRateSchedule
+from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from ogbujipt import word_loom
 from ogbujipt.prompting import format
 
@@ -259,6 +259,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         num_iterations = epoch_num_steps if args.iters == -1 else args.iters
     else:
         num_iterations = epoch_num_steps * args.epochs
+    num_iterations = int(num_iterations)
 
     print(
         f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
