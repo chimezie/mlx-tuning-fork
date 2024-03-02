@@ -154,7 +154,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
         extra_context = loom.get(extra_context_section, '')
         if loom_markers is not None:
             marker, value = loom_markers.split('=')
-            question = question.format(**{marker: value[1:-1]})
+            question = question.format(**{marker: value})
         return format(question, preamble=system, contexts=extra_context, delimiters=prompt_formatter.get_delimiters())
 
 @click.command()
