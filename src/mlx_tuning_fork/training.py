@@ -1,3 +1,5 @@
+import warnings
+
 import mlx.optimizers as optim
 import numpy as np
 from mlx_lm.tuner.lora import LoRALinear
@@ -252,7 +254,20 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             layer.block_sparse_moe.gate = LoRALinear.from_linear(layer.block_sparse_moe.gate)
 
     print("Loading datasets")
-    train_set, valid_set, test_set = lora.load_dataset(args)
+    names = ("train_set", "valid_set", "test_set")
+    train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+    if args.train and len(train_set) == 0:
+        raise ValueError(
+            "Training set not found or empty. Must provide training set for fine-tuning."
+        )
+    if args.train and len(valid_set) == 0:
+        warnings.warn(
+            "Validation set not found or empty. Must provide validation set for fine-tuning."
+        )
+    if args.test and len(test_set) == 0:
+        raise ValueError(
+            "Test set not found or empty. Must provide test_set set for evaluation."
+        )
 
     epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
     if args.epochs == -1:
@@ -300,11 +315,9 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             print("Training")
             model.train()
             opt = optim.Adam(learning_rate=scheduler)
-            train_loss = []
-            validation_loss = []
             pbar = tqdm(total=num_iterations)
 
-            train(
+            train_set(
                 model,
                 tokenizer,
                 opt,
@@ -316,16 +329,6 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
                 else iterate_batches,
                 training_callback=training_callback
             )
-            if args.train_loss_file:
-                with Path(args.train_loss_file).open('a') as csvfile:
-                    writer = csv.writer(csvfile, delimiter='\t')
-                    writer.writerows(train_loss)
-                print(f"Wrote loss data to {args.train_loss_file}")
-            if args.validation_loss_file:
-                with Path(args.validation_loss_file).open('a') as csvfile:
-                    writer = csv.writer(csvfile, delimiter='\t')
-                    writer.writerows(validation_loss)
-                print(f"Wrote loss data to {args.validation_loss_file}")
 
         # Load the LoRA adapter weights which we assume should exist by this point
         if not Path(args.adapter_file).is_file():
