@@ -254,8 +254,8 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             layer.block_sparse_moe.gate = LoRALinear.from_linear(layer.block_sparse_moe.gate)
 
     print("Loading datasets")
-    names = ("train_set", "valid_set", "test_set")
-    train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+    names = ("train", "valid", "test")
+    train_set, valid_set, test_set = (lora.Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
     if args.train and len(train_set) == 0:
         raise ValueError(
             "Training set not found or empty. Must provide training set for fine-tuning."
