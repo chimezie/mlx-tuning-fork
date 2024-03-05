@@ -317,7 +317,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             opt = optim.Adam(learning_rate=scheduler)
             pbar = tqdm(total=num_iterations)
 
-            train_set(
+            train(
                 model,
                 tokenizer,
                 opt,
