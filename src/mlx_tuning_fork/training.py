@@ -2,8 +2,8 @@ import warnings
 
 import mlx.optimizers as optim
 import numpy as np
-from mlx_lm.tuner.lora import LoRALinear
 from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train
+from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.utils import load, generate
 from mlx_lm.generate import colorprint_by_t0
 from mlx_lm import lora
@@ -73,14 +73,16 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
             max_width = min(max(lengths), max_seq_length)
 
             batch_arr = np.zeros((batch_size, max_width), np.int32)
+            adjusted_lengths = []
             for j in range(batch_size):
                 input_length = input_lengths[j]
-                full_ids_end_idx = input_length + min(output_lengths[j], max_seq_length - input_length)
+                full_ids_end_idx = input_length + min(output_lengths[j], max_width - input_length)
+                adjusted_lengths.append(full_ids_end_idx)
                 batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
             batch = mx.array(batch_arr)
             if train:
                 pbar.update(1)
-            yield batch, mx.array(input_lengths), mx.array(lengths)
+            yield batch, mx.array(input_lengths), mx.array(adjusted_lengths)
 
         if not train:
             break
@@ -234,6 +236,8 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     #     tokenizer_config["eos_token"] = args.eos_token
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
     model.freeze()
+    # Convert linear layers to lora layers and unfreeze in the process
+    linear_to_lora_layers(model, args.lora_layers, args.lora_parameters)
 
     training_callback = None
     if wandb_project:
@@ -241,17 +245,6 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         import wandb
         wandb.init(project=wandb_project, name=wandb_run, config=config)
         training_callback = WandbCallback()
-
-    if args.all_linear_layers:
-        print("Using LoRa on all linear layers ..")
-    for layer in model.model.layers[len(model.model.layers) - args.lora_layers :]:
-        layer.self_attn.q_proj = LoRALinear.from_linear(layer.self_attn.q_proj)
-        layer.self_attn.v_proj = LoRALinear.from_linear(layer.self_attn.v_proj)
-        if args.all_linear_layers:
-            layer.self_attn.k_proj = LoRALinear.from_linear(layer.self_attn.k_proj)
-            layer.self_attn.o_proj = LoRALinear.from_linear(layer.self_attn.o_proj)
-        if hasattr(layer, "block_sparse_moe"):
-            layer.block_sparse_moe.gate = LoRALinear.from_linear(layer.block_sparse_moe.gate)
 
     print("Loading datasets")
     names = ("train", "valid", "test")
@@ -262,7 +255,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         )
     if args.train and len(valid_set) == 0:
         warnings.warn(
-            "Validation set not found or empty. Must provide validation set for fine-tuning."
+            "Validation set not found or empty. Should provide validation set for fine-tuning."
         )
     if args.test and len(test_set) == 0:
         raise ValueError(
@@ -309,6 +302,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             steps_per_eval=scaled_steps_per_eval,
             steps_per_save=scaled_save_every,
             adapter_file=args.adapter_file,
+            max_seq_length=args.max_seq_length
         )
 
         if args.train:
