@@ -50,6 +50,6 @@ CONFIG_DEFAULTS = {
     "ignore_chat_template": False,
     "colorize": False,
     "trust_remote_code": False,
-    "all_linear_layers": False
+    "lora_parameters": {"rank": 8, "alpha": 16, "dropout": 0.0, "scale": 10.0},
 
 }

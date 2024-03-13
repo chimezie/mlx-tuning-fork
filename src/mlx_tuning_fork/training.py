@@ -207,7 +207,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
 
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)
-        param_dict = {k: v for k, v in config["parameters"].items()}
+        param_dict = {k: v for k, v in config.items()}
         if "model" not in param_dict:
             raise SyntaxError('Missing required "model" parameter')
         for key, default in CONFIG_DEFAULTS.items():
