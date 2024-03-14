@@ -6,12 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "mlx-tuning-fork"
 version = "0.3"
 dependencies = [
-    "mlx>=0.7.0",
+    "mlx",
     "click",
     "tqdm",
     "ogbujipt",
     "numpy",
-    "mlx_lm>=0.3.0",
+    "mlx_lm",
     "pyyaml",
     "pytest"
 ]
