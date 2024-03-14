@@ -4,12 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlx-tuning-fork"
-version = "0.2"
+version = "0.3"
 dependencies = [
     "mlx",
     "click",
+    "tqdm",
+    "ogbujipt",
+    "numpy",
+    "mlx_lm",
     "pyyaml",
     "pytest"
+]
+description = "Basic framework for LLM (Q)LoRA fine-tuning using mlx, mlx_lm, and OgbujiPT."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+keywords = []
+authors = [
+  { name = "Chimezie Ogbuji", email = "chimezie@gmail.com" }
+]
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: Implementation :: PyPy",
 ]
 
 [tool.setuptools.packages.find]
