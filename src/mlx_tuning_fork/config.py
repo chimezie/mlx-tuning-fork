@@ -1,4 +1,3 @@
-from mlx_lm.generate import DEFAULT_MAX_TOKENS, DEFAULT_TEMP, DEFAULT_SEED, DEFAULT_TOP_P
 import yaml
 import re
 
@@ -16,13 +15,13 @@ yaml_loader.add_implicit_resolver(
 
 
 CONFIG_DEFAULTS = {
-    "num_tokens": DEFAULT_MAX_TOKENS,
+    "num_tokens": 100,
     "write_every": 1,
     "prompt": None,
     "train": False,
     "data": "data/",
-    "temp": DEFAULT_TEMP,
-    "top_p": DEFAULT_TOP_P,
+    "temp": 0.6,
+    "top_p": 1.0,
     "lora_layers": 16,
     "batch_size": 4,
     "iters": -1,
@@ -36,7 +35,7 @@ CONFIG_DEFAULTS = {
     "test": False,
     "test_batches": 500,
     "max_seq_length": 2048,
-    "seed": DEFAULT_SEED,
+    "seed": 0,
     "max_tokens": 100,
     "save_every": 100,
     "validation_scale": 5,
