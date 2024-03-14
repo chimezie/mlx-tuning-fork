@@ -25,7 +25,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install mlx click tqdm ogbujipt numpy mlx_lm pyyaml pytest
+        pip install ruff mlx click tqdm ogbujipt numpy mlx_lm pyyaml pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install -U $GITHUB_WORKSPACE
     - name: Lint with ruff
