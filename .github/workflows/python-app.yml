@@ -1,0 +1,34 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
+name: Python application
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install mlx click tqdm ogbujipt numpy mlx_lm pyyaml pytest
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install -U $GITHUB_WORKSPACE
+    - name: Lint with ruff
+      run: |
+        ruff --select=E9,F63,F7,F82 --target-version=py311 .
+        ruff --target-version=py311 .
