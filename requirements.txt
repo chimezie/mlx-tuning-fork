@@ -1,8 +1,8 @@
-mlx
+mlx>=0.7.0
 click
 tqdm
 ogbujipt
 numpy
-mlx-lm
+mlx-lm>=0.3.0
 pyyaml
 pytest
