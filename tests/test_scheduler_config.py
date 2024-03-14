@@ -1,7 +1,7 @@
 import pytest
 import yaml
 from mlx_tuning_fork.config import yaml_loader
-from mlx_tuning_fork.tuning.dynamic_learning import *
+from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 
 
 def load_config(yaml_string, total_iterations):
