@@ -11,7 +11,7 @@ dependencies = [
     "tqdm",
     "ogbujipt",
     "numpy",
-    "mlx_lm",
+    "mlx-lm",
     "pyyaml",
     "pytest"
 ]
