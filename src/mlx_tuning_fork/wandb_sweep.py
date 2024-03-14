@@ -12,7 +12,7 @@ from mlx_tuning_fork.reporting import WandbCallback
 from mlx_lm.utils import load
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.tuner.trainer import TrainingArgs, train
-from mlx_lm.lora import CONFIG_DEFAULTS, load_dataset, run as lora_run
+from mlx_lm.lora import CONFIG_DEFAULTS, load_dataset
 
 yaml_loader = yaml.SafeLoader
 yaml_loader.add_implicit_resolver(

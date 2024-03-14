@@ -14,7 +14,7 @@ class Dataset:
             self._data = None
         else:
             with open(path, "r") as f:
-                self._data = [json.loads(l) for l in f]
+                self._data = [json.loads(line) for line in f]
 
     def __getitem__(self, idx: int):
         return self._data[idx]
