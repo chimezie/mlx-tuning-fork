@@ -38,15 +38,12 @@ CONFIG_DEFAULTS = {
     "max_seq_length": 2048,
     "seed": generate.DEFAULT_SEED,
     "max_tokens": 100,
-    "tokens_per_eval": 10,
     "save_every": 100,
     "validation_scale": 5,
     "reporting_interval_proportion": 0.01, #10/1000
     "validation_interval_proportion": 0.2, #200/1000
     "validations_per_train_item": .5,
     "adapter_save_interval_proportion": .1,
-    "train_loss_file": None,
-    "validation_loss_file": None,
     "ignore_chat_template": False,
     "colorize": False,
     "trust_remote_code": False,

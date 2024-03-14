@@ -76,7 +76,6 @@ for Cosine annealing):
 ```yaml
 learning_schedule:
   type: "cosine"
-  min_lr: 1e-7 #lower bound for learning rate 
   max_lr: 2e-5 #upper bound for learning rate 
   cycle_length: -1 #-1 for the number of steps/iterations in 1 epoch or a specific number otherwise (LR set to min_lr afterwards)
 ```

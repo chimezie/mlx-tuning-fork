@@ -1,6 +1,8 @@
-import mlx.nn as nn
 import re
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 import click
 import yaml
 import numpy as np
@@ -45,6 +47,8 @@ class Sweeper:
         self.config = config
 
     def sweep(self):
+        if wandb is None:
+            raise ImportError('wandb module not available.  Install with `pip install wandb`')
         wandb.init(project=self.project_name)
         sweep_parameters = self.config["sweep_configuration"]["parameters"]
         wandb_config = wandb.config
@@ -105,6 +109,8 @@ class Sweeper:
 @click.option('--wandb-project', default=None, type=str, help='Wandb project name')
 @click.argument('config_file', type=click.File('r'))
 def main(verbose, wandb_project, config_file):
+    if wandb is None:
+        raise ImportError('wandb module not available.  Install with `pip install wandb`')
     config = yaml.load(config_file, yaml_loader)
     sweep_id = wandb.sweep(sweep=config["sweep_configuration"], project=wandb_project)
 

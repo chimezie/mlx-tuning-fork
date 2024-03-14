@@ -20,8 +20,6 @@ from mlx_tuning_fork.reporting import WandbCallback
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from ogbujipt import word_loom
 from ogbujipt.prompting import format
-
-import csv
 from pathlib import Path
 from pprint import pprint
 
@@ -241,8 +239,12 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
 
     training_callback = None
     if wandb_project:
-        assert wandb_run is not None
-        import wandb
+        if wandb_run is None:
+            raise RuntimeError("Specify the name of a Wandb run to use with --wandb-run ")
+        try:
+            import wandb
+        except ImportError:
+            raise ImportError('wandb module not available.  Install with `pip install wandb`')
         wandb.init(project=wandb_project, name=wandb_run, config=config)
         training_callback = WandbCallback()
 
