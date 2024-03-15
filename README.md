@@ -7,10 +7,10 @@ declarative prompt construction, an equivalent of HF's [train on completions](ht
 
 ## Installation
 
-For now, can be installed by cloning the repository and running (in the local working copy)
+Can be installed via:
 
 ```bash
-$ pip install .
+$ pip install mlx-tuning-fork
 ```
 
 Currently just has a single Mistral prompt format (-f/ --prompt-format) module, but with mlx-lm and OgbujiPT you can do something similar with other models:
