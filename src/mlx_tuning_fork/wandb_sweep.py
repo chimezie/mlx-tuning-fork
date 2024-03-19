@@ -56,10 +56,10 @@ class Sweeper:
         if "learning_rate" in sweep_parameters:
             self.config["learning_rate"] = wandb_config.learning_rate
             print(f"learning rate: {self.config['learning_rate']}")
-        if "lora_rank" in sweep_parameters:
+        if "rank" in sweep_parameters:
             self.config["lora_parameters"]["rank"] = wandb_config.lora_rank
             print(f"lora rank: {self.config['lora_parameters']['rank']}")
-        if "lora_alpha" in sweep_parameters:
+        if "alpha" in sweep_parameters:
             self.config["lora_parameters"]["alpha"] = wandb_config.lora_alpha
             print(f"lora alpha: {self.config['lora_parameters']['alpha']}")
         if "batch_size" in sweep_parameters:
