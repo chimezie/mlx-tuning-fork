@@ -9,9 +9,14 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
+from mlx_tuning_fork.training/ import completions_only_loss
+from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from mlx_lm.utils import load
+import mlx.core as mx
+from mlx_lm import lora
+from mlx_tuning_fork.dataset import Dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers
-from mlx_lm.tuner.trainer import TrainingArgs, train
+from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
 from mlx_lm.lora import CONFIG_DEFAULTS, load_dataset
 
 yaml_loader = yaml.SafeLoader
@@ -40,11 +45,64 @@ sweep_configuration = {
     },
 }
 
+def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
+    #idx = sorted(range(len(dataset)), key=lambda idx: len(dataset[idx]))
+    #See https://github.com/ml-explore/mlx-examples/issues/583
+    idx = range(len(dataset))
+
+    # Make the batches:
+    batch_idx = [
+        idx[i: i + batch_size] for i in range(0, len(idx) - batch_size + 1, batch_size)
+    ]
+    while True:
+        indices = np.random.permutation(len(batch_idx))
+        for i in indices:
+            input_text = []
+            output_text = []
+            for j in batch_idx[i]:
+                record = dataset[j]
+                input_text.append(prompt_formatter.get_input(record))
+                output_text.append(prompt_formatter.get_output(record))
+
+            input_batch = [tokenizer.encode(record) for record in input_text]
+            output_batch = [tokenizer.encode(record, add_special_tokens=False) +
+                            [tokenizer.eos_token_id] for record in output_text]
+
+            input_lengths = [len(x) for x in input_batch]
+            output_lengths = [len(x) for x in output_batch]
+
+            full_labels = [input_batch[idx] + output_batch[idx] for idx in range(batch_size)]
+            lengths = [len(x) for x in full_labels]
+
+            if max(lengths) > max_seq_length:
+                print(
+                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
+                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
+                    "Consider pre-splitting your data to save memory."
+                )
+            pad_to = 8
+            max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
+            max_length_in_batch = min(max_length_in_batch, max_seq_length)
+
+            batch_arr = np.zeros((batch_size, max_length_in_batch), np.int32)
+            adjusted_lengths = []
+            for j in range(batch_size):
+                input_length = input_lengths[j]
+                full_ids_end_idx = input_length + min(output_lengths[j], max_length_in_batch - input_length)
+                adjusted_lengths.append(full_ids_end_idx)
+                batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
+            batch = mx.array(batch_arr)
+            yield batch, mx.array(input_lengths), mx.array(adjusted_lengths)
+
+        if not train:
+            break
 
 class Sweeper:
-    def __init__(self, project_name, config):
+    def __init__(self, project_name, config, loss_fn, iterate_batches_fn):
         self.project_name = project_name
         self.config = config
+        self.loss_fn = loss_fn
+        self.iterate_batches_fn = iterate_batches_fn
 
     def sweep(self):
         if wandb is None:
@@ -78,8 +136,16 @@ class Sweeper:
         model.freeze()
         # Convert linear layers to lora layers and unfreeze in the process
         linear_to_lora_layers(model, args.lora_layers, self.config["lora_parameters"])
-
+        lora.Dataset = Dataset
         train_set, valid_set, test_set = load_dataset(args)
+
+        if "learning_schedule" in self.config:
+            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
+                self.config["learning_schedule"]["type"]].from_configuration(args.learning_rate, self.config,
+                                                                             args.iters)
+        else:
+            scheduler = args.learning_rate
+
         trainingArgs = TrainingArgs(
             batch_size=args.batch_size,
             iters=args.iters,
@@ -92,7 +158,7 @@ class Sweeper:
         )
         print("Training")
         model.train()
-        opt = optim.Adam(learning_rate=args.learning_rate)
+        opt = optim.Adam(learning_rate=scheduler)
         train(
             model=model,
             tokenizer=tokenizer,
@@ -100,6 +166,8 @@ class Sweeper:
             optimizer=opt,
             train_dataset=train_set,
             val_dataset=valid_set,
+            loss=self.loss_fn,
+            iterate_batches=self.iterate_batches_fn,
             training_callback=training_callback,
         )
 
@@ -107,8 +175,13 @@ class Sweeper:
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
 @click.option('--wandb-project', default=None, type=str, help='Wandb project name')
+@click.option('--train-type',
+              type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
+              default="completion-only")
+@click.option('-f', '--prompt-format',
+              type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
 @click.argument('config_file', type=click.File('r'))
-def main(verbose, wandb_project, config_file):
+def main(verbose, wandb_project, train_type, prompt_format, config_file):
     if wandb is None:
         raise ImportError('wandb module not available.  Install with `pip install wandb`')
     config = yaml.load(config_file, yaml_loader)
@@ -118,8 +191,17 @@ def main(verbose, wandb_project, config_file):
     for k, v in CONFIG_DEFAULTS.items():
         if not config.get(k, None):
             config[k] = v
-
-    wandb.agent(sweep_id, function=Sweeper(wandb_project, config).sweep)
+    global prompt_formatter
+    if prompt_format == 'mistral':
+        from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
+        prompt_formatter = TrainingRecordHandler
+    elif prompt_format == 'chatml':
+        from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
+        prompt_formatter = TrainingRecordHandler
+    wandb.agent(sweep_id, function=Sweeper(wandb_project, config,
+                                           completions_only_loss if train_type == 'completion-only' else default_loss,
+                                           completions_only_iterate_batches if train_type == 'completion-only'
+                                           else iterate_batches).sweep)
 
 
 if __name__ == '__main__':
