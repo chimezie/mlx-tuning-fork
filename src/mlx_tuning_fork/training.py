@@ -41,13 +41,21 @@ def completions_only_loss(model, inputs, input_lengths, lengths):
 
 
 def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
+    #idx = sorted(range(len(dataset)), key=lambda idx: len(dataset[idx]))
+    #See https://github.com/ml-explore/mlx-examples/issues/583
+    idx = range(len(dataset))
+
+    # Make the batches:
+    batch_idx = [
+        idx[i: i + batch_size] for i in range(0, len(idx) - batch_size + 1, batch_size)
+    ]
     while True:
-        indices = np.random.permutation(np.arange(len(dataset)))
-        for i in range(0, len(indices) - batch_size + 1, batch_size):
+        indices = np.random.permutation(len(batch_idx))
+        for i in indices:
             input_text = []
             output_text = []
-            for j in range(batch_size):
-                record = dataset[indices[i + j]]
+            for j in batch_idx[i]:
+                record = dataset[j]
                 input_text.append(prompt_formatter.get_input(record))
                 output_text.append(prompt_formatter.get_output(record))
 
@@ -67,14 +75,15 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
                     f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
                     "Consider pre-splitting your data to save memory."
                 )
+            pad_to = 8
+            max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
+            max_length_in_batch = min(max_length_in_batch, max_seq_length)
 
-            max_width = min(max(lengths), max_seq_length)
-
-            batch_arr = np.zeros((batch_size, max_width), np.int32)
+            batch_arr = np.zeros((batch_size, max_length_in_batch), np.int32)
             adjusted_lengths = []
             for j in range(batch_size):
                 input_length = input_lengths[j]
-                full_ids_end_idx = input_length + min(output_lengths[j], max_width - input_length)
+                full_ids_end_idx = input_length + min(output_lengths[j], max_length_in_batch - input_length)
                 adjusted_lengths.append(full_ids_end_idx)
                 batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
             batch = mx.array(batch_arr)
@@ -304,7 +313,8 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             steps_per_eval=scaled_steps_per_eval,
             steps_per_save=scaled_save_every,
             adapter_file=args.adapter_file,
-            max_seq_length=args.max_seq_length
+            max_seq_length=args.max_seq_length,
+            grad_checkpoint=args.grad_checkpoint,
         )
 
         if args.train:
