@@ -229,7 +229,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             param_dict["prompt"] = prompt
             param_dict["test"] = param_dict["train"] = False
         if temperature:
-            param_dict["temperature"] = temperature
+            param_dict["temp"] = temperature
         if adapter:
             param_dict["adapter_file"] = adapter
         if num_tokens and num_tokens != -1:
