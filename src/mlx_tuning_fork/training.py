@@ -2,11 +2,11 @@ import warnings
 
 import mlx.optimizers as optim
 import numpy as np
-from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train
+from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.utils import load, generate
 from mlx_lm.generate import colorprint_by_t0
-from mlx_lm import lora
+from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from types import SimpleNamespace
 import mlx.core as mx
 from tqdm import tqdm
@@ -87,50 +87,7 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
                 adjusted_lengths.append(full_ids_end_idx)
                 batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
             batch = mx.array(batch_arr)
-            if train:
-                pbar.update(1)
             yield batch, mx.array(input_lengths), mx.array(adjusted_lengths)
-
-        if not train:
-            break
-
-
-def iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
-    while True:
-        # Shuffle indices
-        indices = np.arange(len(dataset))
-        indices = np.random.permutation(indices)
-        # Collect batches from dataset
-        for i in range(0, len(indices) - batch_size + 1, batch_size):
-            # Encode batch
-            batch = [
-                tokenizer.encode(
-                    prompt_formatter.get_input(dataset[indices[i + j]]) +
-                    prompt_formatter.get_output(dataset[indices[i + j]])
-                ) for j in range(batch_size)
-            ]
-            lengths = [len(x) for x in batch]
-
-            if max(lengths) > max_seq_length:
-                print(
-                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
-                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
-                    "Consider pre-splitting your data to save memory."
-                )
-
-            # Pad to the max length
-            max_length_in_batch = min(max(lengths), max_seq_length)
-            batch_arr = np.zeros((batch_size, max_length_in_batch), np.int32)
-
-            for j in range(batch_size):
-                truncated_length = min(lengths[j], max_seq_length)
-                batch_arr[j, :truncated_length] = batch[j][:truncated_length]
-                lengths[j] = (
-                    truncated_length  # Update lengths to match truncated lengths
-                )
-            batch = mx.array(batch_arr)
-
-            yield batch[:, :-1], batch[:, 1:], mx.array(lengths)
 
         if not train:
             break
@@ -202,15 +159,13 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
 def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tokens, train_type, prompt_format, adapter,
          wandb_project, wandb_run, repetition_penalty, repetition_context_size, top_p, config_file,
          build_prompt):
-    global pbar, prompt_formatter
+    global prompt_formatter
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
         prompt_formatter = TrainingRecordHandler
     elif prompt_format == 'chatml':
         from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
         prompt_formatter = TrainingRecordHandler
-
-    lora.Dataset = Dataset
 
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)
@@ -255,11 +210,14 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         except ImportError:
             raise ImportError('wandb module not available.  Install with `pip install wandb`')
         wandb.init(project=wandb_project, name=wandb_run, config=config)
-        training_callback = WandbCallback()
 
     print("Loading datasets")
     names = ("train", "valid", "test")
-    train_set, valid_set, test_set = (lora.Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+    if train_type == 'completion-only':
+        dataset = Dataset
+    else:
+        dataset = mlx_lm_dataset
+    train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
     if args.train and len(train_set) == 0:
         raise ValueError(
             "Training set not found or empty. Must provide training set for fine-tuning."
@@ -279,6 +237,9 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     else:
         num_iterations = epoch_num_steps * args.epochs
     num_iterations = int(num_iterations)
+
+    if wandb_project:
+        training_callback = WandbCallback(tqdm(total=num_iterations))
 
     print(
         f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
@@ -321,7 +282,6 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             print("Training")
             model.train()
             opt = optim.Adam(learning_rate=scheduler)
-            pbar = tqdm(total=num_iterations)
 
             train(
                 model,
