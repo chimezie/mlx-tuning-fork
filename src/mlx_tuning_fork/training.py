@@ -188,7 +188,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         if adapter:
             param_dict["adapter_file"] = adapter
         if num_tokens and num_tokens != -1:
-            param_dict["num_tokens"] = num_tokens
+            param_dict["max_tokens"] = num_tokens
         pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
