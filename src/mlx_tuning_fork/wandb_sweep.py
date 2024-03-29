@@ -9,7 +9,7 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.training/ import completions_only_loss
+from mlx_tuning_fork.training import completions_only_loss
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from mlx_lm.utils import load
 import mlx.core as mx
