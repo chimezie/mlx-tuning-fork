@@ -44,13 +44,14 @@ class CosineWithWarmup:
     def from_configuration(cls, learning_rate, config, total_iterations):
         param_dict = {k: v for k, v in config["learning_schedule"].items()}
         min_lr = param_dict["min_lr"]
+        min_cos_lr = param_dict["min_cos_lr"] if "min_cos_lr" in param_dict else 0.0
         max_lr = param_dict["max_lr"] if "max_lr" in param_dict else learning_rate
         cycle_length = param_dict["cycle_length"]
         cycle_length = total_iterations if cycle_length == -1 else cycle_length
         length = param_dict["length"] if "length" in param_dict else int(param_dict["warmup_proportion"] *
                                                                          total_iterations)
         warmup_schedule = mlx_schedulers.linear_schedule(min_lr, max_lr, length)
-        cosine_schedule = mlx_schedulers.cosine_decay(max_lr, cycle_length)
+        cosine_schedule = mlx_schedulers.cosine_decay(max_lr, cycle_length, min_cos_lr)
         cosine_w_warmup_schedule = mlx_schedulers.join_schedules([warmup_schedule, cosine_schedule], [length])
         return cosine_w_warmup_schedule
 
