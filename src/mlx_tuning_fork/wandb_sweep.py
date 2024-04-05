@@ -4,6 +4,7 @@ try:
 except ImportError:
     wandb = None
 import click
+from tqdm import tqdm
 import yaml
 import numpy as np
 import mlx.optimizers as optim
@@ -97,6 +98,7 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
         if not train:
             break
 
+
 class Sweeper:
     def __init__(self, project_name, config, loss_fn, iterate_batches_fn):
         self.project_name = project_name
@@ -125,7 +127,7 @@ class Sweeper:
             print(f"batch size: {self.config['batch_size']}")
 
         args = SimpleNamespace(**self.config)
-        training_callback = WandbCallback()
+        training_callback = WandbCallback(tqdm(total=args.iters))
 
         np.random.seed(args.seed)
 
