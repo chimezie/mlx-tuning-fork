@@ -6,16 +6,17 @@ except ImportError:
 import click
 from tqdm import tqdm
 import yaml
+from pathlib import Path
 import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
 from mlx_tuning_fork.training import completions_only_loss
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
-from mlx_lm.utils import load
+from mlx_lm.utils import load, save_config
 import mlx.core as mx
-from mlx_lm import lora
 from mlx_tuning_fork.dataset import Dataset
+from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
 from mlx_lm.lora import CONFIG_DEFAULTS, load_dataset
@@ -100,11 +101,13 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
 
 
 class Sweeper:
-    def __init__(self, project_name, config, loss_fn, iterate_batches_fn):
+    def __init__(self, project_name, config, train_type):
         self.project_name = project_name
         self.config = config
-        self.loss_fn = loss_fn
-        self.iterate_batches_fn = iterate_batches_fn
+        self.train_type = train_type
+        self.loss_fn = completions_only_loss if train_type == 'completion-only' else default_loss
+        self.iterate_batches_fn = (completions_only_iterate_batches if train_type == 'completion-only'
+                                   else iterate_batches)
 
     def sweep(self):
         if wandb is None:
@@ -138,8 +141,14 @@ class Sweeper:
         model.freeze()
         # Convert linear layers to lora layers and unfreeze in the process
         linear_to_lora_layers(model, args.lora_layers, self.config["lora_parameters"])
-        lora.Dataset = Dataset
-        train_set, valid_set, test_set = load_dataset(args)
+
+        names = ("train", "valid", "test")
+        if self.train_type == 'completion-only':
+            dataset = Dataset
+        else:
+            dataset = mlx_lm_dataset
+        train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+
 
         if "learning_schedule" in self.config:
             scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
@@ -148,6 +157,15 @@ class Sweeper:
         else:
             scheduler = args.learning_rate
 
+        if args.resume_adapter_file is not None:
+            print(f"Loading pretrained adapters from {args.resume_adapter_file}")
+            model.load_weights(args.resume_adapter_file, strict=False)
+
+        adapter_path = Path(args.adapter_path)
+        adapter_path.mkdir(parents=True, exist_ok=True)
+        save_config(vars(args), adapter_path / "adapter_config.json")
+        adapter_file = adapter_path / "adapters.safetensors"
+
         trainingArgs = TrainingArgs(
             batch_size=args.batch_size,
             iters=args.iters,
@@ -155,7 +173,7 @@ class Sweeper:
             steps_per_report=args.steps_per_report,
             steps_per_eval=args.steps_per_eval,
             steps_per_save=args.save_every,
-            adapter_file=args.adapter_file,
+            adapter_file=adapter_file,
             max_seq_length=args.max_seq_length,
         )
         print("Training")
@@ -200,10 +218,7 @@ def main(verbose, wandb_project, train_type, prompt_format, config_file):
     elif prompt_format == 'chatml':
         from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
         prompt_formatter = TrainingRecordHandler
-    wandb.agent(sweep_id, function=Sweeper(wandb_project, config,
-                                           completions_only_loss if train_type == 'completion-only' else default_loss,
-                                           completions_only_iterate_batches if train_type == 'completion-only'
-                                           else iterate_batches).sweep)
+    wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type).sweep)
 
 
 if __name__ == '__main__':

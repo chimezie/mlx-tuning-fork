@@ -4,7 +4,7 @@ import mlx.optimizers as optim
 import numpy as np
 from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
 from mlx_lm.tuner.utils import linear_to_lora_layers
-from mlx_lm.utils import load, generate
+from mlx_lm.utils import load, generate, save_config
 from mlx_lm.generate import colorprint_by_t0
 from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from types import SimpleNamespace
@@ -190,7 +190,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         if temperature:
             param_dict["temp"] = temperature
         if adapter:
-            param_dict["adapter_file"] = adapter
+            param_dict["adapter_path"] = adapter
         if num_tokens and num_tokens != -1:
             param_dict["max_tokens"] = num_tokens
         pprint(param_dict)
@@ -270,6 +270,11 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         else:
             scheduler = args.learning_rate
 
+        adapter_path = Path(args.adapter_path)
+        adapter_path.mkdir(parents=True, exist_ok=True)
+        save_config(vars(args), adapter_path / "adapter_config.json")
+        adapter_file = adapter_path / "adapters.safetensors"
+
         training_args = TrainingArgs(
             batch_size=args.batch_size,
             iters=num_iterations,
@@ -277,7 +282,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             steps_per_report=scaled_steps_per_report,
             steps_per_eval=scaled_steps_per_eval,
             steps_per_save=scaled_save_every,
-            adapter_file=args.adapter_file,
+            adapter_file=adapter_file,
             max_seq_length=args.max_seq_length,
             grad_checkpoint=args.grad_checkpoint,
         )
@@ -301,11 +306,12 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             )
 
         # Load the LoRA adapter weights which we assume should exist by this point
-        if not Path(args.adapter_file).is_file():
+        if not adapter_file.is_file():
             raise ValueError(
-                f"Adapter file {args.adapter_file} missing. "
+                f"Adapter file {adapter_file} missing. "
+                "Use --train to learn and save the adapters"
             )
-        model.load_weights(args.adapter_file, strict=False)
+        model.load_weights(str(adapter_file), strict=False)
         print(f"Loaded weights from {args.adapter_file}")
 
         if args.test:
