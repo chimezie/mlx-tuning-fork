@@ -125,6 +125,9 @@ class Sweeper:
         if "alpha" in sweep_parameters:
             self.config["lora_parameters"]["alpha"] = wandb_config.alpha
             print(f"lora alpha: {self.config['lora_parameters']['alpha']}")
+        if "dropout" in sweep_parameters:
+            self.config["lora_parameters"]["dropout"] = wandb_config.dropout
+            print(f"lora dropout: {self.config['lora_parameters']['dropout']}")
         if "batch_size" in sweep_parameters:
             self.config["batch_size"] = wandb_config.batch_size
             print(f"batch size: {self.config['batch_size']}")
