@@ -119,7 +119,11 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
             question_section = 'question'
         question = loom[question_section]
         system = loom.get(system_section, '')
-        extra_context = loom.get(extra_context_section, '')
+        if extra_context_section[0] == '[' and extra_context_section[-1] == ']':
+            with open(extra_context_section[1:-1], 'r') as f:
+                extra_context = f.read()
+        else:
+            extra_context = loom.get(extra_context_section, '')
         if loom_markers is not None:
             marker, value = loom_markers.split('=')
             question = question.format(**{marker: value})
