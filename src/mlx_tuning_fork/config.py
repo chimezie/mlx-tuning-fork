@@ -31,7 +31,6 @@ CONFIG_DEFAULTS = {
     "steps_per_report": 10,
     "steps_per_eval": 200,
     "resume_adapter_file": None,
-    "adapter_file": "adapters.npz",
     "test": False,
     "test_batches": 500,
     "max_seq_length": 2048,

@@ -205,6 +205,8 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     # Convert linear layers to lora layers and unfreeze in the process
     linear_to_lora_layers(model, args.lora_layers, args.lora_parameters)
 
+    print_trainable_parameters(model)
+
     training_callback = None
     if wandb_project:
         if wandb_run is None:
@@ -248,7 +250,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     print(
         f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
         f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
-        f"{len(valid_set):,} records, training {args.lora_layers} layers out of {len(model.model.layers)} using qLoRa."
+        f"{len(valid_set):,} records, training {args.lora_layers} layers out of {len(model.layers)} using qLoRa."
     )
 
     scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
@@ -269,6 +271,11 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
                 config["learning_schedule"]["type"]].from_configuration(args.learning_rate, config, num_iterations)
         else:
             scheduler = args.learning_rate
+
+        # Resume training the given adapters.
+        if args.resume_adapter_file is not None:
+            print(f"Loading pretrained adapters from {args.resume_adapter_file}")
+            model.load_weights(args.resume_adapter_file, strict=False)
 
         adapter_path = Path(args.adapter_path)
         adapter_path.mkdir(parents=True, exist_ok=True)
