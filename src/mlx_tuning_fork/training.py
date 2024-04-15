@@ -5,6 +5,7 @@ import numpy as np
 from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.utils import load, generate, save_config
+from mlx_lm.lora import print_trainable_parameters
 from mlx_lm.generate import colorprint_by_t0
 from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from types import SimpleNamespace
