@@ -19,7 +19,7 @@ from mlx_tuning_fork.dataset import Dataset
 from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
-from mlx_lm.lora import CONFIG_DEFAULTS, load_dataset
+from mlx_lm.lora import CONFIG_DEFAULTS
 
 yaml_loader = yaml.SafeLoader
 yaml_loader.add_implicit_resolver(
