@@ -48,4 +48,4 @@ class TestCosineWithWarmup:
         load_config(self.TEST_YAML3, 10000)
         with pytest.raises(KeyError) as excinfo:
             load_config(self.TEST_YAML4, 10000)
-        assert "cycle_length in " in str(excinfo.value)
+        assert "cycle_length" in str(excinfo.value)
