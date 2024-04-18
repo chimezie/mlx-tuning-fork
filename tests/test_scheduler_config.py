@@ -6,9 +6,8 @@ from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_
 
 def load_config(yaml_string, total_iterations):
     config = yaml.load(yaml_string, yaml_loader)
-    learning_rate = config["learning_rate"]
     return SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
-        config["learning_schedule"]["type"]].from_configuration(learning_rate, config, total_iterations)
+        config["learning_schedule"]["type"]].from_configuration(config.get("learning_rate"), config, total_iterations)
 
 
 class TestCosineWithWarmup:
