@@ -127,7 +127,8 @@ they are assumed to be system prompt, context, and user prompt.
 If they are not specified via ``--build-prompt``, the system prompt is assumed to be specified in a table named 
 **system_prompt**, the context is from a table named **context**, and the user prompt is from a table named **question**.
 
-
+If any of the table header name of the context is of the form ``[filename.txt]`` the contents of the specified filename are used
+for the instead.
 
 If any of the text values in the corresponding tables have curly braces, the ``--loom-markers`` option can be used
 to provide values for the names specified in between the braces.  It is expected to be a string in the format: 
@@ -196,8 +197,10 @@ Usage: python -m mlx_tuning_fork.wandb_sweep [OPTIONS] CONFIG_FILE
 
 Options:
   --verbose / --no-verbose
-  --wandb-project TEXT      Wandb project name
-  --help                    Show this message and exit.
+  --wandb-project TEXT            Wandb project name
+  --train-type [completion-only|self-supervised]
+  -f, --prompt-format [mistral|chatml]
+  --help                          Show this message and exit.
 ```
 
 It takes a single argument which is a [Wandb sweep configuration (YAML) file](https://docs.wandb.ai/guides/sweeps/define-sweep-configuration)
