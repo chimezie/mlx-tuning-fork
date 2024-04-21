@@ -191,7 +191,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         if temperature:
             param_dict["temp"] = temperature
         if adapter:
-            param_dict["adapter_path"] = adapter
+            param_dict["resume_adapter_file"] = adapter
         if num_tokens and num_tokens != -1:
             param_dict["max_tokens"] = num_tokens
         pprint(param_dict)
@@ -320,7 +320,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
                 "Use --train to learn and save the adapters"
             )
         model.load_weights(str(adapter_file), strict=False)
-        print(f"Loaded weights from {args.adapter_file}")
+        print(f"Loaded weights from {adapter_file}")
 
         if args.test:
             print(f"Testing ({len(test_set):,} records)")
