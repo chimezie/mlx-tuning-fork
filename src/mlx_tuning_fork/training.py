@@ -147,6 +147,9 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     elif prompt_format == 'chatml':
         from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
         prompt_formatter = TrainingRecordHandler
+    elif prompt_format == 'llama3':
+        from mlx_tuning_fork.prompt_templates.llama3 import TrainingRecordHandler
+        prompt_formatter = TrainingRecordHandler
 
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)
