@@ -121,7 +121,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
               type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
               default="completion-only")
 @click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
+              type=click.Choice(['mistral', 'chatml', 'llama3'], case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
               help='Adapter to use instead of the one specified in the config file')
 @click.option('--wandb-project', default=None, type=str,
