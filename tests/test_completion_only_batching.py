@@ -26,14 +26,16 @@ class TestCreateDelineatedBatches:
             batch_item = batch[idx]
             output_ids = self.tokenizer.encode(output)
             tokenized_output_length = len(output_ids)
-            non_padding_length = tokenized_output_length + self.tokenized_prompt_length
-            padding = batch_item[non_padding_length:]
-            expected_padding = mx.array([0] * (expected_length - non_padding_length))
-            assert mx.array_equal(padding, expected_padding)
+            non_padding_length = min(expected_length, tokenized_output_length + self.tokenized_prompt_length)
+
+            # All padding tokens are 0
+            assert np.all(np.take(batch_item, np.arange(non_padding_length, len(batch_item))) == 0)
+
+            #All non-padding tokens are nonzero
+            assert np.all(np.take(batch_item, np.arange(non_padding_length)) != 0)
 
     def test_basic_no_truncation(self):
         self._run_test(20, 16)
 
     def test_basic_w_truncation(self):
         self._run_test(10, 10)
-
