@@ -38,6 +38,7 @@ CONFIG_DEFAULTS = {
     "max_tokens": 100,
     "save_every": 100,
     "validation_scale": 5,
+    "adapter_path": "adapters",
     "reporting_interval_proportion": 0.01, #10/1000
     "validation_interval_proportion": 0.2, #200/1000
     "validations_per_train_item": .5,
