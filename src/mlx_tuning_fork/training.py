@@ -29,7 +29,7 @@ from pprint import pprint
 def completions_only_loss(model, inputs, input_lengths, lengths):
     shifted_inputs = inputs[:, :-1]
     shifted_labels = inputs[:, 1:]
-    logits, _ = model(shifted_inputs)
+    logits = model(shifted_inputs)
     logits = logits.astype(mx.float32)
 
     mask_width = shifted_inputs.shape[1]
