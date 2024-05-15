@@ -7,7 +7,6 @@ from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.utils import load, generate, save_config
 from mlx_lm.lora import print_trainable_parameters
 from mlx_lm.generate import colorprint_by_t0
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from mlx_tuning_fork.tuning.utils import create_delineated_batches
 from types import SimpleNamespace
 import mlx.core as mx
@@ -17,6 +16,7 @@ import click
 import yaml
 import math
 from mlx_tuning_fork.dataset import Dataset
+from mlx_tuning_fork.datasets import load_dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.reporting import WandbCallback
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
@@ -200,10 +200,10 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     print("Loading datasets")
     names = ("train", "valid", "test")
     if train_type == 'completion-only':
-        dataset = Dataset
+        train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
     else:
-        dataset = mlx_lm_dataset
-    train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+        train_set, valid_set, test_set = load_dataset(args, tokenizer)
+
     if args.train and len(train_set) == 0:
         raise ValueError(
             "Training set not found or empty. Must provide training set for fine-tuning."
