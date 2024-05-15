@@ -18,7 +18,7 @@ class TrainingRecordHandler:
 
     @classmethod
     def get_output(cls, record) -> str:
-        return f"<|start_header_id|>assistant<|end_header_id|>\n\noutput<|eot_id|>"
+        return f"<|start_header_id|>assistant<|end_header_id|>\n\n{record['output']}<|eot_id|>"
 
     @classmethod
     def get_delimiters(cls) -> Dict:
