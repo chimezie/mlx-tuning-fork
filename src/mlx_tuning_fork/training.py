@@ -7,8 +7,8 @@ from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.utils import load, generate, save_config
 from mlx_lm.lora import print_trainable_parameters
 from mlx_lm.generate import colorprint_by_t0
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from mlx_tuning_fork.tuning.utils import create_delineated_batches
+from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from types import SimpleNamespace
 import mlx.core as mx
 from tqdm import tqdm
@@ -121,7 +121,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
               type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
               default="completion-only")
 @click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral', 'chatml', 'llama3'], case_sensitive=False))
+              type=click.Choice(['mistral', 'chatml', 'llama3', 'alpaca'], case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
               help='Adapter to use instead of the one specified in the config file')
 @click.option('--wandb-project', default=None, type=str,
@@ -150,7 +150,10 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     elif prompt_format == 'llama3':
         from mlx_tuning_fork.prompt_templates.llama3 import TrainingRecordHandler
         prompt_formatter = TrainingRecordHandler
-
+    elif prompt_format == 'alpaca':
+        from mlx_tuning_fork.prompt_templates.alpaca import TrainingRecordHandler
+        prompt_formatter = TrainingRecordHandler
+    tokenizer_config = {}
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)
         param_dict = {k: v for k, v in config.items()}
@@ -173,13 +176,14 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             param_dict["resume_adapter_file"] = adapter
         if num_tokens and num_tokens != -1:
             param_dict["max_tokens"] = num_tokens
+        tokenizer_config = {"trust_remote_code": True if param_dict.get("trust_remote_code") else None}
+        param_dict_eos_token = param_dict.get("eos_token")
+        if param_dict_eos_token is not None:
+            tokenizer_config["eos_token"] = param_dict["eos_token"]
         pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
     print("Loading pretrained model")
-    tokenizer_config = {"trust_remote_code": True if args.trust_remote_code else None}
-    # if args.eos_token is not None:
-    #     tokenizer_config["eos_token"] = args.eos_token
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
     model.freeze()
     # Convert linear layers to lora layers and unfreeze in the process
@@ -199,11 +203,11 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
 
     print("Loading datasets")
     names = ("train", "valid", "test")
-    if train_type == 'completion-only':
-        dataset = Dataset
+    if train_type in ('completion-only', 'debug'):
+        train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
     else:
-        dataset = mlx_lm_dataset
-    train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+        train_set, valid_set, test_set = (mlx_lm_dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+
     if args.train and len(train_set) == 0:
         raise ValueError(
             "Training set not found or empty. Must provide training set for fine-tuning."
