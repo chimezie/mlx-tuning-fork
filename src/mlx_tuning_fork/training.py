@@ -339,7 +339,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             formatter = colorprint_by_t0 if args.colorize else None
 
             generate(
-                model, tokenizer, prompt, temp=args.temp, max_tokens=args.max_tokens, vervose=True, formatter=formatter,
+                model, tokenizer, prompt, temp=args.temp, max_tokens=args.max_tokens, verbose=True, formatter=formatter,
                 repetition_penalty=repetition_penalty,
                 repetition_context_size=repetition_context_size,
                 top_p=top_p
