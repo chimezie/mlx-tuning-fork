@@ -121,7 +121,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
               type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
               default="completion-only")
 @click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral', 'chatml', 'llama3', 'alpaca'], case_sensitive=False))
+              type=click.Choice(['mistral', 'chatml', 'llama3', 'alpaca', 'phi'], case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
               help='Adapter to use instead of the one specified in the config file')
 @click.option('--wandb-project', default=None, type=str,
@@ -152,6 +152,9 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
         prompt_formatter = TrainingRecordHandler
     elif prompt_format == 'alpaca':
         from mlx_tuning_fork.prompt_templates.alpaca import TrainingRecordHandler
+        prompt_formatter = TrainingRecordHandler
+    elif prompt_format == 'phi':
+        from mlx_tuning_fork.prompt_templates.phi import TrainingRecordHandler
         prompt_formatter = TrainingRecordHandler
     tokenizer_config = {}
     with open(config_file, "r") as file:
