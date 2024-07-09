@@ -47,5 +47,6 @@ CONFIG_DEFAULTS = {
     "colorize": False,
     "trust_remote_code": False,
     "lora_parameters": {"rank": 8, "alpha": 16, "dropout": 0.0, "scale": 10.0},
-    "grad_checkpoint": False
+    "grad_checkpoint": False,
+    "use_dora": False,
 }

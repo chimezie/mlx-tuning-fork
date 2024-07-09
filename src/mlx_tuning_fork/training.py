@@ -190,7 +190,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
     model.freeze()
     # Convert linear layers to lora layers and unfreeze in the process
-    linear_to_lora_layers(model, args.lora_layers, args.lora_parameters)
+    linear_to_lora_layers(model, args.lora_layers, args.lora_parameters, args.use_dora)
 
     print_trainable_parameters(model)
 
