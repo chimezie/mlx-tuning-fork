@@ -1,6 +1,24 @@
 import yaml
 import re
 
+
+def get_prompt_formatter(prompt_format):
+    if prompt_format == 'mistral':
+        from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
+        return TrainingRecordHandler
+    elif prompt_format == 'chatml':
+        from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
+        return TrainingRecordHandler
+    elif prompt_format == 'llama3':
+        from mlx_tuning_fork.prompt_templates.llama3 import TrainingRecordHandler
+        return TrainingRecordHandler
+    elif prompt_format == 'alpaca':
+        from mlx_tuning_fork.prompt_templates.alpaca import TrainingRecordHandler
+        return TrainingRecordHandler
+    elif prompt_format == 'phi':
+        from mlx_tuning_fork.prompt_templates.phi import TrainingRecordHandler
+        return TrainingRecordHandler
+
 yaml_loader = yaml.SafeLoader
 yaml_loader.add_implicit_resolver(
     u'tag:yaml.org,2002:float',

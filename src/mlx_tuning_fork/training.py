@@ -17,7 +17,7 @@ import click
 import yaml
 import math
 from mlx_tuning_fork.dataset import Dataset
-from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
+from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter
 from mlx_tuning_fork.reporting import WandbCallback
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from ogbujipt import word_loom
@@ -141,21 +141,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
          wandb_project, wandb_run, repetition_penalty, repetition_context_size, top_p, config_file,
          build_prompt):
     global prompt_formatter
-    if prompt_format == 'mistral':
-        from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
-        prompt_formatter = TrainingRecordHandler
-    elif prompt_format == 'chatml':
-        from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
-        prompt_formatter = TrainingRecordHandler
-    elif prompt_format == 'llama3':
-        from mlx_tuning_fork.prompt_templates.llama3 import TrainingRecordHandler
-        prompt_formatter = TrainingRecordHandler
-    elif prompt_format == 'alpaca':
-        from mlx_tuning_fork.prompt_templates.alpaca import TrainingRecordHandler
-        prompt_formatter = TrainingRecordHandler
-    elif prompt_format == 'phi':
-        from mlx_tuning_fork.prompt_templates.phi import TrainingRecordHandler
-        prompt_formatter = TrainingRecordHandler
+    prompt_formatter = get_prompt_formatter(prompt_format)
     tokenizer_config = {}
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)

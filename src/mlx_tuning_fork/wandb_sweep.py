@@ -19,6 +19,7 @@ from mlx_tuning_fork.dataset import Dataset
 from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
+from mlx_tuning_fork.config import get_prompt_formatter
 from mlx_lm.lora import CONFIG_DEFAULTS
 
 yaml_loader = yaml.SafeLoader
@@ -202,7 +203,7 @@ class Sweeper:
               type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
               default="completion-only")
 @click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral', 'chatml'], case_sensitive=False))
+              type=click.Choice(['mistral', 'chatml', 'llama3', 'alpaca', 'phi'], case_sensitive=False))
 @click.argument('config_file', type=click.File('r'))
 def main(verbose, wandb_project, train_type, prompt_format, config_file):
     if wandb is None:
@@ -215,12 +216,7 @@ def main(verbose, wandb_project, train_type, prompt_format, config_file):
         if not config.get(k, None):
             config[k] = v
     global prompt_formatter
-    if prompt_format == 'mistral':
-        from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
-        prompt_formatter = TrainingRecordHandler
-    elif prompt_format == 'chatml':
-        from mlx_tuning_fork.prompt_templates.chatml import TrainingRecordHandler
-        prompt_formatter = TrainingRecordHandler
+    prompt_formatter = get_prompt_formatter(prompt_format)
     wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type).sweep)
 
 
