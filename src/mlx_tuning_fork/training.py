@@ -11,14 +11,12 @@ from mlx_tuning_fork.tuning.utils import create_delineated_batches
 from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from types import SimpleNamespace
 import mlx.core as mx
-from tqdm import tqdm
 import mlx.nn as nn
 import click
 import yaml
 import math
 from mlx_tuning_fork.dataset import Dataset
-from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter
-from mlx_tuning_fork.reporting import WandbCallback
+from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter, scale_training_parameters
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from ogbujipt import word_loom
 from ogbujipt.prompting import format
@@ -210,26 +208,8 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             "Test set not found or empty. Must provide test_set set for evaluation."
         )
 
-    epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
-    if args.epochs == -1:
-        num_iterations = epoch_num_steps if args.iters == -1 else args.iters
-    else:
-        num_iterations = epoch_num_steps * args.epochs
-    num_iterations = int(num_iterations)
-
-    if wandb_project:
-        training_callback = WandbCallback(tqdm(total=num_iterations))
-
-    print(
-        f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
-        f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
-        f"{len(valid_set):,} records, training {args.lora_layers} layers out of {len(model.layers)} using qLoRa."
-    )
-
-    scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
-    scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
-    scaled_val_batches = int(args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
-    scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
+    (num_iterations, scaled_save_every, scaled_steps_per_eval, scaled_steps_per_report, scaled_val_batches,
+     training_callback) = scale_training_parameters(args, model, train_set, training_callback, valid_set, wandb_project)
 
     print(
         f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "

@@ -11,16 +11,16 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.training import completions_only_loss
+from mlx_tuning_fork.training import completions_only_loss, completions_only_iterate_batches
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from mlx_lm.utils import load, save_config
 import mlx.core as mx
 from mlx_tuning_fork.dataset import Dataset
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
+from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset, create_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
-from mlx_tuning_fork.config import get_prompt_formatter
-from mlx_lm.lora import CONFIG_DEFAULTS
+from mlx_tuning_fork.config import get_prompt_formatter, scale_training_parameters
+from mlx_tuning_fork.config import CONFIG_DEFAULTS
 
 yaml_loader = yaml.SafeLoader
 yaml_loader.add_implicit_resolver(
@@ -47,58 +47,6 @@ sweep_configuration = {
         "y": {"values": [1, 3, 7]},
     },
 }
-
-def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
-    #idx = sorted(range(len(dataset)), key=lambda idx: len(dataset[idx]))
-    #See https://github.com/ml-explore/mlx-examples/issues/583
-    idx = range(len(dataset))
-
-    # Make the batches:
-    batch_idx = [
-        idx[i: i + batch_size] for i in range(0, len(idx) - batch_size + 1, batch_size)
-    ]
-    while True:
-        indices = np.random.permutation(len(batch_idx))
-        for i in indices:
-            input_text = []
-            output_text = []
-            for j in batch_idx[i]:
-                record = dataset[j]
-                input_text.append(prompt_formatter.get_input(record))
-                output_text.append(prompt_formatter.get_output(record))
-
-            input_batch = [tokenizer.encode(record) for record in input_text]
-            output_batch = [tokenizer.encode(record, add_special_tokens=False) +
-                            [tokenizer.eos_token_id] for record in output_text]
-
-            input_lengths = [len(x) for x in input_batch]
-            output_lengths = [len(x) for x in output_batch]
-
-            full_labels = [input_batch[idx] + output_batch[idx] for idx in range(batch_size)]
-            lengths = [len(x) for x in full_labels]
-
-            if max(lengths) > max_seq_length:
-                print(
-                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
-                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
-                    "Consider pre-splitting your data to save memory."
-                )
-            pad_to = 8
-            max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
-            max_length_in_batch = min(max_length_in_batch, max_seq_length)
-
-            batch_arr = np.zeros((batch_size, max_length_in_batch), np.int32)
-            adjusted_lengths = []
-            for j in range(batch_size):
-                input_length = input_lengths[j]
-                full_ids_end_idx = input_length + min(output_lengths[j], max_length_in_batch - input_length)
-                adjusted_lengths.append(full_ids_end_idx)
-                batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
-            batch = mx.array(batch_arr)
-            yield batch, mx.array(input_lengths), mx.array(adjusted_lengths)
-
-        if not train:
-            break
 
 
 class Sweeper:
@@ -149,17 +97,9 @@ class Sweeper:
         names = ("train", "valid", "test")
         if self.train_type == 'completion-only':
             dataset = Dataset
+            train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
         else:
-            dataset = mlx_lm_dataset
-        train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
-
-
-        if "learning_schedule" in self.config:
-            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
-                self.config["learning_schedule"]["type"]].from_configuration(args.learning_rate, self.config,
-                                                                             args.iters)
-        else:
-            scheduler = args.learning_rate
+            train_set, valid_set, test_set = (create_dataset(Path(args.data) / f"{n}.jsonl", tokenizer) for n in names)
 
         if args.resume_adapter_file is not None:
             print(f"Loading pretrained adapters from {args.resume_adapter_file}")
@@ -170,13 +110,24 @@ class Sweeper:
         save_config(vars(args), adapter_path / "adapter_config.json")
         adapter_file = adapter_path / "adapters.safetensors"
 
+        (num_iterations, scaled_save_every, scaled_steps_per_eval, scaled_steps_per_report, scaled_val_batches,
+         training_callback) = scale_training_parameters(args, model, train_set, training_callback, valid_set)
+
+        if "learning_schedule" in self.config:
+            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
+                self.config["learning_schedule"]["type"]].from_configuration(args.learning_rate, self.config,
+                                                                             num_iterations)
+        else:
+            scheduler = args.learning_rate
+
+
         trainingArgs = TrainingArgs(
             batch_size=args.batch_size,
-            iters=args.iters,
-            val_batches=args.val_batches,
-            steps_per_report=args.steps_per_report,
-            steps_per_eval=args.steps_per_eval,
-            steps_per_save=args.save_every,
+            iters=num_iterations,
+            val_batches=scaled_val_batches,
+            steps_per_report=scaled_steps_per_report,
+            steps_per_eval=scaled_steps_per_eval,
+            steps_per_save=scaled_save_every,
             adapter_file=adapter_file,
             max_seq_length=args.max_seq_length,
         )

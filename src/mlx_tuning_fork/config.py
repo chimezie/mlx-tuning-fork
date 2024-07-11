@@ -1,6 +1,28 @@
 import yaml
 import re
+from mlx_tuning_fork.reporting import WandbCallback
+from tqdm import tqdm
 
+
+def scale_training_parameters(args, model, train_set, training_callback, valid_set, wandb_project=None):
+    epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
+    if args.epochs == -1:
+        num_iters = epoch_num_steps if args.iters == -1 else args.iters
+    else:
+        num_iters = epoch_num_steps * args.epochs
+    num_iters = int(num_iters)
+    if wandb_project:
+        training_callback = WandbCallback(tqdm(total=num_iters))
+    print(
+        f"{num_iters:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
+        f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
+        f"{len(valid_set):,} records, training {args.lora_layers} layers out of {len(model.layers)} using qLoRa."
+    )
+    steps_per_report = int(args.reporting_interval_proportion * num_iters)
+    steps_per_eval = int(num_iters * args.validation_interval_proportion)
+    val_batches = int(args.validations_per_train_item * args.validation_interval_proportion * num_iters)
+    save_every = int(args.adapter_save_interval_proportion * num_iters)
+    return num_iters, save_every, steps_per_eval, steps_per_report, val_batches, training_callback
 
 def get_prompt_formatter(prompt_format):
     if prompt_format == 'mistral':
