@@ -17,7 +17,7 @@ import click
 import yaml
 import math
 from mlx_tuning_fork.dataset import Dataset
-from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter
+from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter, PROMPT_FORMATS
 from mlx_tuning_fork.reporting import WandbCallback
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from ogbujipt import word_loom
@@ -121,7 +121,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
               type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
               default="completion-only")
 @click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral', 'chatml', 'llama3', 'alpaca', 'phi'], case_sensitive=False))
+              type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
 @click.option('-a', '--adapter', default=None, type=str,
               help='Adapter to use instead of the one specified in the config file')
 @click.option('--wandb-project', default=None, type=str,

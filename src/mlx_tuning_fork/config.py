@@ -1,8 +1,11 @@
 import yaml
 import re
 
+PROMPT_FORMATS = ['mistral', 'chatml', 'llama3', 'alpaca', 'phi', 'gemma']
+
 
 def get_prompt_formatter(prompt_format):
+    #@TODO: Make this configuration driven but still import base in a way that is secure
     if prompt_format == 'mistral':
         from mlx_tuning_fork.prompt_templates.mistral import TrainingRecordHandler
         return TrainingRecordHandler
@@ -17,6 +20,9 @@ def get_prompt_formatter(prompt_format):
         return TrainingRecordHandler
     elif prompt_format == 'phi':
         from mlx_tuning_fork.prompt_templates.phi import TrainingRecordHandler
+        return TrainingRecordHandler
+    elif prompt_format == 'gemma':
+        from mlx_tuning_fork.prompt_templates.gemma import TrainingRecordHandler
         return TrainingRecordHandler
 
 yaml_loader = yaml.SafeLoader
