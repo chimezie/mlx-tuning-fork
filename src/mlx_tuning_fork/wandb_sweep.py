@@ -111,16 +111,6 @@ class Sweeper:
         save_config(vars(args), adapter_path / "adapter_config.json")
         adapter_file = adapter_path / "adapters.safetensors"
 
-        trainingArgs = TrainingArgs(
-            batch_size=args.batch_size,
-            iters=args.iters,
-            val_batches=args.val_batches,
-            steps_per_report=args.steps_per_report,
-            steps_per_eval=args.steps_per_eval,
-            steps_per_save=args.save_every,
-            adapter_file=adapter_file,
-            max_seq_length=args.max_seq_length,
-        )
         print("Training")
         model.train()
         opt = optim.Adam(
@@ -129,13 +119,48 @@ class Sweeper:
             )
         )
 
+        epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
+        num_iterations = 400
+
+        print(
+            f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
+            f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
+            f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
+        )
+
+        if args.evals_per_epoch:
+            scaled_steps_per_eval = int(num_iterations / args.evals_per_epoch)
+            scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
+                                     ) if args.eval_proportion_of_total else (
+                int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size))
+            )
+        else:
+            scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
+            scaled_val_batches = int(
+                args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
+
+        scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
+        scaled_save_every = 1000
+
+        print(
+            f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
+            f"{scaled_steps_per_eval:,} steps, and validating with {scaled_val_batches:,} batches"
+        )
         train(
             model=model,
             tokenizer=tokenizer,
             optimizer=opt,
             train_dataset=train_set,
             val_dataset=valid_set,
-            args=trainingArgs,
+            args = TrainingArgs(batch_size=args.batch_size,
+                                iters=num_iterations,
+                                val_batches=scaled_val_batches,
+                                steps_per_report=scaled_steps_per_report,
+                                steps_per_eval=scaled_steps_per_eval,
+                                steps_per_save=scaled_save_every,
+                                adapter_file=adapter_file,
+                                max_seq_length=args.max_seq_length,
+                                grad_checkpoint=args.grad_checkpoint),
             iterate_batches=(
                 iterate_delineated_batches if args.mask_inputs else iterate_batches
             ),
