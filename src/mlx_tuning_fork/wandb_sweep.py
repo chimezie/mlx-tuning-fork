@@ -76,6 +76,9 @@ class Sweeper:
         if "batch_size" in sweep_parameters:
             self.config["batch_size"] = wandb_config.batch_size
             print(f"batch size: {self.config['batch_size']}")
+        self.config["mask_input"] = self.mask_input
+        if self.mask_input:
+            print(f"Masking inputs")
 
         args = SimpleNamespace(**self.config)
         training_callback = WandbCallback(tqdm(total=args.iters))
