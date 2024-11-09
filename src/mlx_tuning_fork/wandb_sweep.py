@@ -14,8 +14,8 @@ from mlx_tuning_fork.reporting import WandbCallback
 from .config import yaml_loader, get_prompt_formatter, PROMPT_FORMATS
 from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
 from mlx_lm.utils import load, save_config
-from mlx_tuning_fork.config import CONFIG_DEFAULTS
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset, load_dataset
+from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
+from mlx_lm.tuner.datasets import load_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.tuner.trainer import (TrainingArgs, train, default_loss, iterate_batches, input_masked_loss,
                                   iterate_delineated_batches)
@@ -77,10 +77,11 @@ class Sweeper:
             self.config["batch_size"] = wandb_config.batch_size
             print(f"batch size: {self.config['batch_size']}")
         self.config["mask_inputs"] = self.mask_inputs
-        self.config["eval_proportion_of_total"] = CONFIG_DEFAULTS["eval_proportion_of_total"]
-        self.config["validation_interval_proportion"] = CONFIG_DEFAULTS["validation_interval_proportion"]
-        self.config["validations_per_train_item"] = CONFIG_DEFAULTS["validations_per_train_item"]
-        self.config["reporting_interval_proportion"] = CONFIG_DEFAULTS["reporting_interval_proportion"]
+        self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
+        self.config["validation_interval_proportion"] = TF_CONFIG_DEFAULTS["validation_interval_proportion"]
+        self.config["validations_per_train_item"] = TF_CONFIG_DEFAULTS["validations_per_train_item"]
+        self.config["reporting_interval_proportion"] = TF_CONFIG_DEFAULTS["reporting_interval_proportion"]
+        self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
         if self.mask_inputs:
             print(f"Masking inputs")
 
