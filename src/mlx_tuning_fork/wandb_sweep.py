@@ -124,20 +124,22 @@ class Sweeper:
             )
         )
 
-        epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
         num_iterations = 400
+        len_train_set = num_iterations
+        len_val_set = int(num_iterations * args.validation_interval_proportion)
+        epoch_num_steps = (len_train_set + args.batch_size - 1) // args.batch_size
 
         print(
             f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
-            f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
-            f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
+            f"{len_train_set :,} records, {args.batch_size} at a time and with a validation set of "
+            f"{len_val_set :,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
         )
 
         if args.evals_per_epoch:
             scaled_steps_per_eval = int(num_iterations / args.evals_per_epoch)
-            scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
+            scaled_val_batches = int(len_val_set * args.eval_proportion_of_total / args.batch_size
                                      ) if args.eval_proportion_of_total else (
-                int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size))
+                int(len_val_set / ((args.evals_per_epoch - 1) * args.batch_size))
             )
         else:
             scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
