@@ -13,60 +13,65 @@ Can be installed via:
 $ pip install mlx-tuning-fork
 ```
 
-Currently just has a single Mistral prompt format (-f/ --prompt-format) module, but with mlx-lm and OgbujiPT you can do something similar with other models:
-
-* Llama
-* Mixtral
-* Qwen
-* [..]
-
 ## Command-line options
-You can get documentation of the command-line options for fine tuning via:
+You can get documentation of the command-line options for the fine-tuning command (**mlx_tuning_fork_training**) via:
 
 ```commandline
+% mlx_tuning_fork_training --help
 Usage: python -m mlx_tuning_fork.training [OPTIONS] CONFIG_FILE
 
 Options:
   --verbose / --no-verbose
   --summary / --no-summary        Just summarize training data
-  --loom-file TEXT                An OgbujiPT word loom file to use for prompt
-                                  construction
-  --loom-markers TEXT             Loom marker values
-  -p, --prompt TEXT               Commandline prompt (overrides) prompt in
-                                  YAML configuration
-  -t, --temperature FLOAT         Prompt generation temperature
-  -nt, --num-tokens INTEGER       Overide number of tokens in config file
-  --train-type [completion-only|self-supervised]
-  -f, --prompt-format [mistral|chatml]
-  -a, --adapter TEXT              Adapter to use instead of the one specified
-                                  in the config file
+  --train-type [lora-completion-only|dora-completion-only|lora-self-supervised|dora-self-supervised]
+  -f, --prompt-format [mistral|chatml|llama3|alpaca|phi|gemma]
   --wandb-project TEXT            Wandb project name
   --wandb-run TEXT                Wandb run name
-  -rp, --repetition-penalty FLOAT
-                                  The penalty factor for repeating tokens
-                                  (none if not used)
-  --repetition-context-size INTEGER
-                                  The number of tokens to consider for
-                                  repetition penalty
-  -tp, --top-p FLOAT              Sampling top-p
-  --build-prompt TEXT             Which word loom sections to use in building
-                                  the claim (space-separated list of sections)
   --help                          Show this message and exit.
 ```
 
 The format of the prompts used to train the model is specified via the `-f/--prompt-format` option, which currently
-is one of **mistral** or **chatml**.
+is one of:
+
+- mistra
+- chatml
+- llama3
+- alpaca
+- phi
+- gemma
 
 ## Configuration
 
 It uses mlx_lm's [YAML config format](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/examples/lora_config.yaml) 
-and adds additional parameters and sections:
+and adds additional parameters and sections.
+
+It provides configurations that can be used to automatically determine values for the [mlx_lm fine-tuning parameters](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/LORA.md#fine-tune) that configure
+how the training is run:
+
+- the total number of steps/iterations to run (`iters`)
+- the number of iterations between validation runs to evaluate the model (`steps_per_eval`, same semantics as [axolotl's](https://axolotl-ai-cloud.github.io/axolotl/docs/config.html) `eval_steps`)
+- the number of iterations between the calculation of training loss (`steps_per_report`)
+- the number of steps between the writing out of the (D/L)oRA adapter (`save_every`)
+- the number of batches of records from the validation set to use for each validation run (`val_batches`)
+
+In particular, the following additional configurations can be used to automatically determine the values for these parameters:
 
 * **epochs** (How many epochs, i.e., the number of iterations for a full pass of the data)
-* **reporting_interval_proportion** (The proportion of iterations in an epoch to wait between recording training loss - defaults to .01 or 1%)
-* **validation_interval_proportion** (Same proportions for interval between validations - defaults to 0.2 or 20%)
-* **validations_per_train_item** (The ration of the number of validation per training record seen - defaults to .5 or 1 validation per 2 training records)
+    * If specified, it determines the total number of iterations (`iters`) from the size of the training set, the batch size (`batch_size`), and the requested number of epochs
+* **evals_per_epoch** Same as axolotl's hyperparameter of the same name (The number of validations to run for each epoch)
+    * If specified, it calculates `steps_per_eval` using `evals_per_epoch`, the size of the training set, the batch size, the number of iterations in an epoch, and the requested number of epochs.  It also calculates `val_batches` such that all validation records are used by the end of the epoch or according to `eval_proportion_of_total`, if specified. 
+* **eval_proportion_of_total** (The proportion of the complete set of validation data to use for each validation - defaults to .25 or 25%)
+    * Used with `evals_per_epoch` and, if provided, sets `scaled_val_batches` accordingly   
+* **reporting_interval_proportion** (The proportion of iterations in an epoch to wait between calculating training loss - defaults to .01 or 1%)
+    * Used to determine `steps_per_report`   
+* **validation_interval_proportion** (The proportion of iterations in an epoch to wait between validations - defaults to 0.2 or 20%)
+    * This is used if `evals_per_epoch` is not specified to determine `steps_per_eval` 
+* **validations_per_train_item** (The ratio of the number of validation per training record seen - defaults to .5 or 1 validation per 2 training records)
+    * This is used if `evals_per_epoch` is not provided and is used to determine `scaled_val_batches` 
+* **saves_per_epoch** Same as axolotl's hyperparameter of the same name (The number of times a LoRa adapter is saved for each epoch - defaults to 2)
+    * If provided, it is used to determine `save_every`
 * **adapter_save_interval_proportion** (Same proportions for intervals between saving the LoRa adapter - defaults to .1)
+    * Used to determine `save_ever` if `saves_per_epoch` is not provided
 
 ## Learning Rate Schedules
 
@@ -92,12 +97,53 @@ learning_schedule:
 
 Otherwise a constant learning rate (specified via **learning_rate** top-level configuration variable) is used throughout
 
-## Prompting
-It also provides the ability to dispatch prompts to the model referenced in the config (in conjunction with any
+## Generation
+
+mlx-tuning-fork also includes a command for generating from mlx models: **mlx_tuning_fork_generate**
+
+```commandline
+% mlx_tuning_fork_generate --help
+Usage: python -m mlx_tuning_fork.generate [OPTIONS] MODEL_NAME
+
+Options:
+  --loom-file TEXT                An OgbujiPT word loom file to use for prompt
+                                  construction
+  --loom-markers TEXT             Loom marker values
+  -p, --prompt TEXT               Commandline prompt (overrides) prompt in
+                                  YAML configuration
+  -t, --temperature FLOAT         Prompt generation temperature
+  -nt, --num-tokens INTEGER       Overide number of tokens in config file
+  -f, --prompt-format [mistral|chatml|llama3|alpaca|phi|gemma]
+  -a, --adapter-path TEXT         Adapter to use instead of the one specified
+                                  in the config file
+  -rp, --repetition-penalty FLOAT
+                                  The penalty factor for repeating tokens
+                                  (none if not used)
+  --repetition-context-size INTEGER
+                                  The number of tokens to consider for
+                                  repetition penalty
+  -tp, --top-p FLOAT              Sampling top-p
+  --min-p FLOAT                   Sampling min-p
+  --min-p-tokens INTEGER          Sampling min-p
+  --build-prompt TEXT             Which word loom sections to use in building
+                                  the claim (space-separated list of sections)
+  --trust-remote-code / --no-trust-remote-code
+  --eos-token TEXT                End of sequence token for tokenizer
+  --seed INTEGER                  PRNG seed
+  --colorize / --no-colorize      Colorize output based on token probability
+  --cot-source TEXT               The name of the file with an apply chat
+                                  template structure to use as the basis for a
+                                  few-shot prompt construction
+  --help                          Show this message and exit.
+
+```
+
+It allows you to generate from a model referenced in the config (in conjunction with any
 LoRA adapters specified).  The `-p/--prompt` option can be used to provide a prompt, and the `-t/--temperature`, 
-`-rp/--repetition-penalty`, `--repetition-context-size`, `-tp/--top-p` can be used to configure the evaluation of the prompt.
-There is also an additional *colorize* parameter (specified in the config), which if true, will render the model's 
-completion using a coloring scheme that captures the probability of each token using mlx_lm's capability in this regard.
+`-rp/--repetition-penalty`, `--repetition-context-size`, `-tp/--top-p`, and `--min-p` can be used to configure the 
+various parameters of the prompt evaluation. There is also an additional, boolean `--colorize/--no-colorize` parameter 
+(defaults to false), which if true, will render the model's 
+completion using a coloring scheme that captures the probability of each token.
 
 ## Declarative Prompts Construction
 
@@ -138,7 +184,7 @@ So, the following command-line:
 
 ```commandline
 $ python -m mlx_tuning_fork.training --loom-file=loom.toml \
-         --build-prompt "system_prompt_final templated_question_final" -f chatml \
+         --build-prompt "system_prompt_final context templated_question_final" -f chatml \
          --loom-markers "medical_problems=[Lymphoid aggregate]" /path/to/loom.toml
 ```
 
@@ -153,7 +199,7 @@ text = """You are a medical professional.  If you cannot provide an answer based
 text = """Lymphoid aggregates are a collection of B cells, T cells, and supporting cells, present within the stroma of various organs"""
 
 [templated_question_final]
-text = """The patient has {Lymphoid aggregate}.  Summarize the patient's problems"""
+text = """The patient has {medical_problems}.  Summarize the patient's problems"""
 ```
 
 will result in the following [ChatML](https://github.com/openai/openai-python/blob/release-v0.28.0/chatml.md) prompt being sent to the model:
@@ -166,7 +212,7 @@ Lymphoid aggregates are a collection of B cells, T cells, and supporting cells, 
 <|im_end|>
 <|im_start|>user
 
-The patient has {medical_problems}.  Summarize the patient's problems
+The patient has Lymphoid aggregate.  Summarize the patient's problems
 <|im_end|>
 <|im_start|>assistant
 ```

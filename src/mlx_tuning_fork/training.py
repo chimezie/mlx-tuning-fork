@@ -6,7 +6,6 @@ from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, it
 from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.utils import load, generate, save_config
 from mlx_lm.lora import print_trainable_parameters
-from mlx_lm.generate import colorprint_by_t0
 from mlx_tuning_fork.tuning.utils import create_delineated_batches
 from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
 from types import SimpleNamespace
@@ -20,8 +19,6 @@ from mlx_tuning_fork.dataset import Dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter, PROMPT_FORMATS
 from mlx_tuning_fork.reporting import WandbCallback
 from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
-from ogbujipt import word_loom
-from ogbujipt.prompting import format
 from pathlib import Path
 from pprint import pprint
 
@@ -69,77 +66,26 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
         if not train:
             break
 
-
-def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_prompt):
-    with open(loom_file, mode='rb') as fp:
-        loom = word_loom.load(fp)
-        if build_prompt is not None:
-            loom_sections = build_prompt.split(' ')
-            num_loom_sections = len(loom_sections)
-            if num_loom_sections not in [1, 2, 3]:
-                raise click.BadParameter("Expected: 1-3 loom section names separated by space")
-            elif num_loom_sections == 1:
-                system_section = 'system_prompt'
-                extra_context_section = 'context'
-                question_section = loom_sections[0]
-            elif num_loom_sections == 2:
-                system_section = loom_sections[0]
-                extra_context_section = 'context'
-                question_section = loom_sections[1]
-            else:
-                system_section = loom_sections[0]
-                extra_context_section = loom_sections[1]
-                question_section = loom_sections[2]
-        else:
-            system_section = 'system_prompt'
-            extra_context_section = 'context'
-            question_section = 'question'
-        question = loom[question_section]
-        system = loom.get(system_section, '')
-        if extra_context_section[0] == '[' and extra_context_section[-1] == ']':
-            with open(extra_context_section[1:-1], 'r') as f:
-                extra_context = f.read()
-        else:
-            extra_context = loom.get(extra_context_section, '')
-        if loom_markers is not None:
-            marker, value = loom_markers.split('=')
-            question = question.format(**{marker: value})
-        return format(question, preamble=system, contexts=extra_context, delimiters=prompt_formatter.get_delimiters())
+ALL_TRAIN_TYPES = ['lora-completion-only', 'dora-completion-only', 'lora-self-supervised',
+                   'dora-self-supervised']
+DORA_TRAIN_TYPES = ['dora-completion-only', 'dora-self-supervised']
+COMPLETION_ONLY_TYPES = ['lora-completion-only', 'dora-completion-only']
+PEFT_TYPES = ['lora-self-supervised', 'dora-self-supervised'] + COMPLETION_ONLY_TYPES
 
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
-@click.option("--loom-file", help="An OgbujiPT word loom file to use for prompt construction")
-@click.option("--loom-markers", help="Loom marker values", default=None, type=str)
-@click.option('-p', '--prompt', default=None, type=str,
-              help='Commandline prompt (overrides) prompt in YAML configuration')
-@click.option('-t', '--temperature', default=None, type=float,
-              help='Prompt generation temperature')
-@click.option('-nt', '--num-tokens', default=-1, type=int,
-              help='Overide number of tokens in config file')
 @click.option('--train-type',
-              type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
-              default="completion-only")
+              type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
+              default="lora-completion-only")
 @click.option('-f', '--prompt-format',
               type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
-@click.option('-a', '--adapter', default=None, type=str,
-              help='Adapter to use instead of the one specified in the config file')
 @click.option('--wandb-project', default=None, type=str,
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
-@click.option('-rp', '--repetition-penalty', default=0, type=float,
-              help='The penalty factor for repeating tokens (none if not used)')
-@click.option('--repetition-context-size', default=20, type=int,
-              help='The number of tokens to consider for repetition penalty')
-@click.option('-tp', '--top-p', default=CONFIG_DEFAULTS["top_p"], type=float,
-              help='Sampling top-p')
-@click.option('--build-prompt', default=None, type=str,
-              help='Which word loom sections to use in building the claim (space-separated list of sections)')
 @click.argument('config_file')
-def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tokens, train_type, prompt_format, adapter,
-         wandb_project, wandb_run, repetition_penalty, repetition_context_size, top_p, config_file,
-         build_prompt):
+def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, config_file):
     global prompt_formatter
     prompt_formatter = get_prompt_formatter(prompt_format)
     tokenizer_config = {}
@@ -152,31 +98,25 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             if key not in param_dict:
                 param_dict[key] = default
         param_dict["verbose"] = verbose
-        if loom_file:
-            param_dict["prompt"] = generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_prompt)
-            param_dict["test"] = param_dict["train"] = False
-            param_dict["ignore_chat_template"] = True
-        if prompt:
-            param_dict["prompt"] = prompt
-            param_dict["test"] = param_dict["train"] = False
-        if temperature:
-            param_dict["temp"] = temperature
-        if adapter:
-            param_dict["resume_adapter_file"] = adapter
-        if num_tokens and num_tokens != -1:
-            param_dict["max_tokens"] = num_tokens
         tokenizer_config = {"trust_remote_code": True if param_dict.get("trust_remote_code") else None}
         param_dict_eos_token = param_dict.get("eos_token")
         if param_dict_eos_token is not None:
             tokenizer_config["eos_token"] = param_dict["eos_token"]
-        pprint(param_dict)
+        if verbose:
+            pprint(param_dict)
         args = SimpleNamespace(**param_dict)
+
+    completion_only_training = train_type in COMPLETION_ONLY_TYPES
 
     print("Loading pretrained model")
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
     model.freeze()
-    # Convert linear layers to lora layers and unfreeze in the process
-    linear_to_lora_layers(model, args.lora_layers, args.lora_parameters)
+    linear_to_lora_layers(
+        model,
+        args.num_layers,
+        args.lora_parameters,
+        use_dora=train_type in DORA_TRAIN_TYPES,
+    )
 
     print_trainable_parameters(model)
 
@@ -192,7 +132,7 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
 
     print("Loading datasets")
     names = ("train", "valid", "test")
-    if train_type in ('completion-only', 'debug'):
+    if train_type in ('lora-completion-only', 'dora-completion-only', 'debug'):
         train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
     else:
         train_set, valid_set, test_set = (mlx_lm_dataset(Path(args.data) / f"{n}.jsonl") for n in names)
@@ -223,20 +163,33 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
     print(
         f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
         f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
-        f"{len(valid_set):,} records, training {args.lora_layers} layers out of {len(model.layers)} using qLoRa."
+        f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
     )
 
+    if args.evals_per_epoch:
+        scaled_steps_per_eval = int(epoch_num_steps / args.evals_per_epoch)
+        scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
+                                 ) if args.eval_proportion_of_total else (
+            int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size))
+        )
+    else:
+        scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
+        scaled_val_batches = int(args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
+
     scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
-    scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
-    scaled_val_batches = int(args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
-    scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
+
+    if args.saves_per_epoch:
+        scaled_save_every = int(epoch_num_steps / args.saves_per_epoch)
+    else:
+        scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
 
     print(
         f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
-        f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, and saving the "
-        f"adapter every {scaled_save_every:,} steps."
+        f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
+        f"and saving the adapter every {scaled_save_every:,} steps."
     )
 
+    iterate_batches_fn = completions_only_iterate_batches if completion_only_training else iterate_batches
     if not summary:
 
         if "learning_schedule" in config:
@@ -271,7 +224,6 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
             print("Training")
             model.train()
             opt = optim.Adam(learning_rate=scheduler)
-
             train(
                 model,
                 tokenizer,
@@ -279,9 +231,8 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
                 train_set,
                 valid_set,
                 args=training_args,
-                loss=completions_only_loss if train_type == 'completion-only' else default_loss,
-                iterate_batches=completions_only_iterate_batches if train_type == 'completion-only'
-                else iterate_batches,
+                loss=completions_only_loss if completion_only_training else default_loss,
+                iterate_batches=iterate_batches_fn,
                 training_callback=training_callback
             )
 
@@ -312,28 +263,31 @@ def main(verbose, summary, loom_file, loom_markers, prompt, temperature, num_tok
 
             print(f"Test loss {test_loss:.3f}, Test ppl {test_ppl:.3f}.")
 
-        if args.prompt is not None:
-            print("Generating")
-            model.eval()
-
-            if not args.ignore_chat_template and (
-                    hasattr(tokenizer, "apply_chat_template")
-                    and tokenizer.chat_template is not None
-            ):
-                messages = [{"role": "user", "content": args.prompt}]
-                prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            else:
-                prompt = args.prompt
-
-            formatter = colorprint_by_t0 if args.colorize else None
-
-            generate(
-                model, tokenizer, prompt, temp=args.temp, max_tokens=args.max_tokens, verbose=True, formatter=formatter,
-                repetition_penalty=repetition_penalty,
-                repetition_context_size=repetition_context_size,
-                top_p=top_p
-            )
-
+    else:
+        total_num_tokens = 0
+        max_tokens = 0
+        _lengths = []
+        for it, (batch, input_lengths, lengths) in zip(
+                range(1, num_iterations + 1),
+                iterate_batches_fn(
+                    dataset=train_set,
+                    tokenizer=tokenizer,
+                    batch_size=args.batch_size,
+                    max_seq_length=args.max_seq_length,
+                    train=False,
+                )
+        ):
+            max_tokens = max(max_tokens, max(lengths))
+            _lengths.extend(lengths)
+            total_num_tokens += sum(lengths)
+        print(f"A total of {total_num_tokens:,} training tokens, {total_num_tokens / num_iterations:.3f} per "
+              f"step/iteration, an average of {total_num_tokens / len(_lengths):.3f} tokens per record, with"
+              f" the largest having {max_tokens:,} tokens.")
+        print(f"mlx_lm.lora --val-batches {scaled_val_batches} \\\n"
+              f"            --steps-per-report {scaled_steps_per_report} \\\n"
+              f"            --steps-per-eval {scaled_steps_per_eval} \\\n"
+              f"            --save-every {scaled_save_every} \\\n"
+              f"            --iters {num_iterations} -c {config_file}")
 
 if __name__ == '__main__':
     main()

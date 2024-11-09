@@ -46,7 +46,9 @@ CONFIG_DEFAULTS = {
     "data": "data/",
     "temp": 0.6,
     "top_p": 1.0,
-    "lora_layers": 16,
+    "num_layers": 16,
+    "evals_per_epoch": None,
+    "saves_per_epoch": 2,
     "batch_size": 4,
     "iters": -1,
     "epochs": -1,
@@ -64,8 +66,11 @@ CONFIG_DEFAULTS = {
     "validation_scale": 5,
     "adapter_path": "adapters",
     "reporting_interval_proportion": 0.01, #10/1000
+
     "validation_interval_proportion": 0.2, #200/1000
     "validations_per_train_item": .5,
+    "eval_proportion_of_total": 0,#0.25,
+
     "adapter_save_interval_proportion": .1,
     "ignore_chat_template": False,
     "colorize": False,
