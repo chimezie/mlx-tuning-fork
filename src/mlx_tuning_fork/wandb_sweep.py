@@ -11,15 +11,14 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.training import completions_only_loss
-from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
+from .config import yaml_loader, get_prompt_formatter, PROMPT_FORMATS
+from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
 from mlx_lm.utils import load, save_config
-import mlx.core as mx
 from mlx_tuning_fork.dataset import Dataset
 from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
-from mlx_lm.tuner.utils import linear_to_lora_layers
-from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
-from mlx_tuning_fork.config import get_prompt_formatter
+from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
+from mlx_lm.tuner.trainer import (TrainingArgs, train, default_loss, iterate_batches, input_masked_loss,
+                                  iterate_delineated_batches)
 from mlx_lm.lora import CONFIG_DEFAULTS
 
 yaml_loader = yaml.SafeLoader
@@ -48,67 +47,12 @@ sweep_configuration = {
     },
 }
 
-def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
-    #idx = sorted(range(len(dataset)), key=lambda idx: len(dataset[idx]))
-    #See https://github.com/ml-explore/mlx-examples/issues/583
-    idx = range(len(dataset))
-
-    # Make the batches:
-    batch_idx = [
-        idx[i: i + batch_size] for i in range(0, len(idx) - batch_size + 1, batch_size)
-    ]
-    while True:
-        indices = np.random.permutation(len(batch_idx))
-        for i in indices:
-            input_text = []
-            output_text = []
-            for j in batch_idx[i]:
-                record = dataset[j]
-                input_text.append(prompt_formatter.get_input(record))
-                output_text.append(prompt_formatter.get_output(record))
-
-            input_batch = [tokenizer.encode(record) for record in input_text]
-            output_batch = [tokenizer.encode(record, add_special_tokens=False) +
-                            [tokenizer.eos_token_id] for record in output_text]
-
-            input_lengths = [len(x) for x in input_batch]
-            output_lengths = [len(x) for x in output_batch]
-
-            full_labels = [input_batch[idx] + output_batch[idx] for idx in range(batch_size)]
-            lengths = [len(x) for x in full_labels]
-
-            if max(lengths) > max_seq_length:
-                print(
-                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
-                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
-                    "Consider pre-splitting your data to save memory."
-                )
-            pad_to = 8
-            max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
-            max_length_in_batch = min(max_length_in_batch, max_seq_length)
-
-            batch_arr = np.zeros((batch_size, max_length_in_batch), np.int32)
-            adjusted_lengths = []
-            for j in range(batch_size):
-                input_length = input_lengths[j]
-                full_ids_end_idx = input_length + min(output_lengths[j], max_length_in_batch - input_length)
-                adjusted_lengths.append(full_ids_end_idx)
-                batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
-            batch = mx.array(batch_arr)
-            yield batch, mx.array(input_lengths), mx.array(adjusted_lengths)
-
-        if not train:
-            break
-
-
 class Sweeper:
-    def __init__(self, project_name, config, train_type):
+    def __init__(self, project_name, config, train_type, mask_input):
         self.project_name = project_name
         self.config = config
         self.train_type = train_type
-        self.loss_fn = completions_only_loss if train_type == 'completion-only' else default_loss
-        self.iterate_batches_fn = (completions_only_iterate_batches if train_type == 'completion-only'
-                                   else iterate_batches)
+        self.mask_input = mask_input
 
     def sweep(self):
         if wandb is None:
@@ -122,13 +66,13 @@ class Sweeper:
             print(f"learning rate: {self.config['learning_rate']}")
         if "rank" in sweep_parameters:
             self.config["lora_parameters"]["rank"] = wandb_config.rank
-            print(f"lora rank: {self.config['lora_parameters']['rank']}")
-        if "alpha" in sweep_parameters:
-            self.config["lora_parameters"]["alpha"] = wandb_config.alpha
-            print(f"lora alpha: {self.config['lora_parameters']['alpha']}")
+            print(f"LoRA rank: {self.config['lora_parameters']['rank']}")
+        if "scale" in sweep_parameters:
+            self.config["lora_parameters"]["scale"] = wandb_config.scale
+            print(f"LoRA config: {self.config['lora_parameters']['scale']}")
         if "dropout" in sweep_parameters:
             self.config["lora_parameters"]["dropout"] = wandb_config.dropout
-            print(f"lora dropout: {self.config['lora_parameters']['dropout']}")
+            print(f"LoRA dropout: {self.config['lora_parameters']['dropout']}")
         if "batch_size" in sweep_parameters:
             self.config["batch_size"] = wandb_config.batch_size
             print(f"batch size: {self.config['batch_size']}")
@@ -143,24 +87,30 @@ class Sweeper:
 
         # Freeze all layers
         model.freeze()
-        # Convert linear layers to lora layers and unfreeze in the process
-        linear_to_lora_layers(model, args.lora_layers, self.config["lora_parameters"])
+        linear_to_lora_layers(
+            model,
+            args.num_layers,
+            args.lora_parameters,
+            use_dora=self.train_type in DORA_TRAIN_TYPES,
+        )
 
+        print("Loading datasets")
         names = ("train", "valid", "test")
-        if self.train_type == 'completion-only':
-            dataset = Dataset
+        if self.train_type in ('lora-completion-only', 'dora-completion-only', 'debug'):
+            train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
         else:
-            dataset = mlx_lm_dataset
-        train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+            train_set, valid_set, test_set = (mlx_lm_dataset(Path(args.data) / f"{n}.jsonl") for n in names)
 
+        if args.train and len(train_set) == 0:
+            raise ValueError(
+                "Training set not found or empty. Must provide training set for fine-tuning."
+            )
+        if args.test and len(test_set) == 0:
+            raise ValueError(
+                "Test set not found or empty. Must provide test_set set for evaluation."
+            )
 
-        if "learning_schedule" in self.config:
-            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
-                self.config["learning_schedule"]["type"]].from_configuration(args.learning_rate, self.config,
-                                                                             args.iters)
-        else:
-            scheduler = args.learning_rate
-
+        # Resume training the given adapters.
         if args.resume_adapter_file is not None:
             print(f"Loading pretrained adapters from {args.resume_adapter_file}")
             model.load_weights(args.resume_adapter_file, strict=False)
@@ -182,17 +132,24 @@ class Sweeper:
         )
         print("Training")
         model.train()
-        opt = optim.Adam(learning_rate=scheduler)
+        opt = optim.Adam(
+            learning_rate=(
+                build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
+            )
+        )
+
         train(
-            model=model,
-            tokenizer=tokenizer,
+            model,
+            tokenizer,
+            opt,
+            train_set,
+            valid_set,
             args=trainingArgs,
-            optimizer=opt,
-            train_dataset=train_set,
-            val_dataset=valid_set,
-            loss=self.loss_fn,
-            iterate_batches=self.iterate_batches_fn,
-            training_callback=training_callback,
+            iterate_batches=(
+                iterate_delineated_batches if args.mask_inputs else iterate_batches
+            ),
+            loss=input_masked_loss if self.mask_input else default_loss,
+            training_callback=training_callback
         )
 
 
@@ -200,12 +157,13 @@ class Sweeper:
 @click.option('--verbose/--no-verbose', default=False)
 @click.option('--wandb-project', default=None, type=str, help='Wandb project name')
 @click.option('--train-type',
-              type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
-              default="completion-only")
+              type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
+              default="lora-completion-only")
 @click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral', 'chatml', 'llama3', 'alpaca', 'phi'], case_sensitive=False))
+              type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
+@click.option('--mask-input/--no-mask-input', default=False)
 @click.argument('config_file', type=click.File('r'))
-def main(verbose, wandb_project, train_type, prompt_format, config_file):
+def main(verbose, wandb_project, train_type, prompt_format, mask_input, config_file):
     if wandb is None:
         raise ImportError('wandb module not available.  Install with `pip install wandb`')
     config = yaml.load(config_file, yaml_loader)
@@ -217,7 +175,7 @@ def main(verbose, wandb_project, train_type, prompt_format, config_file):
             config[k] = v
     global prompt_formatter
     prompt_formatter = get_prompt_formatter(prompt_format)
-    wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type).sweep)
+    wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type, mask_input).sweep)
 
 
 if __name__ == '__main__':
