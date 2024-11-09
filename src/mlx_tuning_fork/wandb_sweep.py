@@ -15,7 +15,7 @@ from .config import yaml_loader, get_prompt_formatter, PROMPT_FORMATS
 from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
 from mlx_lm.utils import load, save_config
 from mlx_tuning_fork.dataset import Dataset
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
+from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset, load_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.tuner.trainer import (TrainingArgs, train, default_loss, iterate_batches, input_masked_loss,
                                   iterate_delineated_batches)
@@ -98,20 +98,8 @@ class Sweeper:
         )
 
         print("Loading datasets")
-        names = ("train", "valid", "test")
-        if self.train_type in ('lora-completion-only', 'dora-completion-only', 'debug'):
-            train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
-        else:
-            train_set, valid_set, test_set = (mlx_lm_dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+        train_set, valid_set, test_set = load_dataset(args, tokenizer)
 
-        if args.train and len(train_set) == 0:
-            raise ValueError(
-                "Training set not found or empty. Must provide training set for fine-tuning."
-            )
-        if args.test and len(test_set) == 0:
-            raise ValueError(
-                "Test set not found or empty. Must provide test_set set for evaluation."
-            )
 
         # Resume training the given adapters.
         if args.resume_adapter_file is not None:
