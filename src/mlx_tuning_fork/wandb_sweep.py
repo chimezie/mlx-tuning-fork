@@ -110,11 +110,6 @@ class Sweeper:
             print(f"Loading pretrained adapters from {args.resume_adapter_file}")
             model.load_weights(args.resume_adapter_file, strict=False)
 
-        adapter_path = Path(args.adapter_path)
-        adapter_path.mkdir(parents=True, exist_ok=True)
-        save_config(vars(args), adapter_path / "adapter_config.json")
-        adapter_file = adapter_path / "adapters.safetensors"
-
         print("Training")
         model.train()
         opt = optim.Adam(
@@ -161,10 +156,9 @@ class Sweeper:
             args = TrainingArgs(batch_size=args.batch_size,
                                 iters=num_iterations,
                                 val_batches=scaled_val_batches,
-                                steps_per_report=scaled_steps_per_eval,
+                                steps_per_report=scaled_steps_per_report,
                                 steps_per_eval=scaled_steps_per_eval,
                                 steps_per_save=scaled_save_every,
-                                adapter_file=adapter_file,
                                 max_seq_length=args.max_seq_length),
             iterate_batches=(
                 iterate_delineated_batches if args.mask_inputs else iterate_batches
