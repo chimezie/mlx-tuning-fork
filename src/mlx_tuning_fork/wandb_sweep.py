@@ -86,7 +86,6 @@ class Sweeper:
             print(f"Masking inputs")
 
         args = SimpleNamespace(**self.config)
-        training_callback = WandbCallback(tqdm(total=args.iters))
 
         np.random.seed(args.seed)
 
@@ -171,7 +170,7 @@ class Sweeper:
                 iterate_delineated_batches if args.mask_inputs else iterate_batches
             ),
             loss=input_masked_loss if self.mask_inputs else default_loss,
-            training_callback=training_callback
+            training_callback=WandbCallback(tqdm(total=num_iterations))
         )
 
 
