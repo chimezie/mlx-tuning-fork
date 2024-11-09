@@ -149,7 +149,7 @@ class Sweeper:
         scaled_save_every = 1000
 
         print(
-            f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
+            f"Calculating loss every {scaled_steps_per_eval:,} steps, reporting validation loss every "
             f"{scaled_steps_per_eval:,} steps, and validating with {scaled_val_batches:,} batches"
         )
         train(
@@ -161,7 +161,7 @@ class Sweeper:
             args = TrainingArgs(batch_size=args.batch_size,
                                 iters=num_iterations,
                                 val_batches=scaled_val_batches,
-                                steps_per_report=scaled_steps_per_report,
+                                steps_per_report=scaled_steps_per_eval,
                                 steps_per_eval=scaled_steps_per_eval,
                                 steps_per_save=scaled_save_every,
                                 adapter_file=adapter_file,
