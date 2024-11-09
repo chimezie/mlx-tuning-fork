@@ -139,11 +139,11 @@ class Sweeper:
         )
 
         train(
-            model,
-            tokenizer,
-            opt,
-            train_set,
-            valid_set,
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=opt,
+            train_dataset=train_set,
+            val_dataset=valid_set,
             args=trainingArgs,
             iterate_batches=(
                 iterate_delineated_batches if args.mask_inputs else iterate_batches
