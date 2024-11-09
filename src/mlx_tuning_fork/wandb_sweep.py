@@ -164,8 +164,7 @@ class Sweeper:
                                 steps_per_eval=scaled_steps_per_eval,
                                 steps_per_save=scaled_save_every,
                                 adapter_file=adapter_file,
-                                max_seq_length=args.max_seq_length,
-                                grad_checkpoint=args.grad_checkpoint),
+                                max_seq_length=args.max_seq_length),
             iterate_batches=(
                 iterate_delineated_batches if args.mask_inputs else iterate_batches
             ),
