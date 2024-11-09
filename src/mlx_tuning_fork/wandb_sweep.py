@@ -48,11 +48,11 @@ sweep_configuration = {
 }
 
 class Sweeper:
-    def __init__(self, project_name, config, train_type, mask_input):
+    def __init__(self, project_name, config, train_type, mask_inputs):
         self.project_name = project_name
         self.config = config
         self.train_type = train_type
-        self.mask_input = mask_input
+        self.mask_inputs = mask_inputs
 
     def sweep(self):
         if wandb is None:
@@ -76,8 +76,8 @@ class Sweeper:
         if "batch_size" in sweep_parameters:
             self.config["batch_size"] = wandb_config.batch_size
             print(f"batch size: {self.config['batch_size']}")
-        self.config["mask_input"] = self.mask_input
-        if self.mask_input:
+        self.config["mask_inputs"] = self.mask_inputs
+        if self.mask_inputs:
             print(f"Masking inputs")
 
         args = SimpleNamespace(**self.config)
@@ -151,7 +151,7 @@ class Sweeper:
             iterate_batches=(
                 iterate_delineated_batches if args.mask_inputs else iterate_batches
             ),
-            loss=input_masked_loss if self.mask_input else default_loss,
+            loss=input_masked_loss if self.mask_inputs else default_loss,
             training_callback=training_callback
         )
 
@@ -164,9 +164,9 @@ class Sweeper:
               default="lora-completion-only")
 @click.option('-f', '--prompt-format',
               type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
-@click.option('--mask-input/--no-mask-input', default=False)
+@click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.argument('config_file', type=click.File('r'))
-def main(verbose, wandb_project, train_type, prompt_format, mask_input, config_file):
+def main(verbose, wandb_project, train_type, prompt_format, mask_inputs, config_file):
     if wandb is None:
         raise ImportError('wandb module not available.  Install with `pip install wandb`')
     config = yaml.load(config_file, yaml_loader)
@@ -178,7 +178,7 @@ def main(verbose, wandb_project, train_type, prompt_format, mask_input, config_f
             config[k] = v
     global prompt_formatter
     prompt_formatter = get_prompt_formatter(prompt_format)
-    wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type, mask_input).sweep)
+    wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type, mask_inputs).sweep)
 
 
 if __name__ == '__main__':
