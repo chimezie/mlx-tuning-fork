@@ -83,7 +83,7 @@ class Sweeper:
         self.config["reporting_interval_proportion"] = TF_CONFIG_DEFAULTS["reporting_interval_proportion"]
         self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
         if self.mask_inputs:
-            print(f"Masking inputs")
+            print("Masking inputs")
 
         args = SimpleNamespace(**self.config)
 
