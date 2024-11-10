@@ -6,36 +6,19 @@ except ImportError:
 import click
 from tqdm import tqdm
 import yaml
-from pathlib import Path
 import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
 from .config import yaml_loader, get_prompt_formatter, PROMPT_FORMATS
 from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
-from mlx_lm.utils import load, save_config
+from mlx_lm.utils import load
 from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
 from mlx_lm.tuner.datasets import load_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.tuner.trainer import (TrainingArgs, train, default_loss, iterate_batches, input_masked_loss,
                                   iterate_delineated_batches)
 from mlx_lm.lora import CONFIG_DEFAULTS
-
-yaml_loader = yaml.SafeLoader
-yaml_loader.add_implicit_resolver(
-    "tag:yaml.org,2002:float",
-    re.compile(
-        """^(?:
-     [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
-    |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
-    |\\.[0-9_]+(?:[eE][-+][0-9]+)?
-    |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
-    |[-+]?\\.(?:inf|Inf|INF)
-    |\\.(?:nan|NaN|NAN))$""",
-        re.X,
-    ),
-    list("-+0123456789."),
-)
 
 # 2: Define the search space
 sweep_configuration = {
@@ -181,6 +164,21 @@ class Sweeper:
 def main(verbose, wandb_project, train_type, prompt_format, mask_inputs, config_file):
     if wandb is None:
         raise ImportError('wandb module not available.  Install with `pip install wandb`')
+    yaml_loader = yaml.SafeLoader
+    yaml_loader.add_implicit_resolver(
+        "tag:yaml.org,2002:float",
+        re.compile(
+            """^(?:
+         [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
+        |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
+        |\\.[0-9_]+(?:[eE][-+][0-9]+)?
+        |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
+        |[-+]?\\.(?:inf|Inf|INF)
+        |\\.(?:nan|NaN|NAN))$""",
+            re.X,
+        ),
+        list("-+0123456789."),
+    )
     config = yaml.load(config_file, yaml_loader)
     sweep_id = wandb.sweep(sweep=config["sweep_configuration"], project=wandb_project)
 

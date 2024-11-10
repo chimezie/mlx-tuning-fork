@@ -5,7 +5,7 @@ import numpy as np
 from mlx_lm.tuner.trainer import (TrainingArgs, default_loss, evaluate, train, iterate_batches,
                                   iterate_delineated_batches, input_masked_loss)
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
-from mlx_lm.utils import load, generate, save_config
+from mlx_lm.utils import load, save_config
 from mlx_lm.lora import print_trainable_parameters
 from mlx_tuning_fork.tuning.utils import create_delineated_batches
 from mlx_lm.tuner.datasets import load_dataset
