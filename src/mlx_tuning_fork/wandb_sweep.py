@@ -118,7 +118,7 @@ class Sweeper:
             )
         )
 
-        num_iterations = 400
+        num_iterations = 200
         len_train_set = num_iterations
         len_val_set = int(num_iterations * args.validation_interval_proportion)
         epoch_num_steps = (len_train_set + args.batch_size - 1) // args.batch_size
