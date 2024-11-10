@@ -59,8 +59,6 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
             pprint(param_dict)
         args = SimpleNamespace(**param_dict)
 
-    completion_only_training = train_type in COMPLETION_ONLY_TYPES
-
     print("Loading pretrained model")
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
     model.freeze()
