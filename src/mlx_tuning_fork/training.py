@@ -1,18 +1,14 @@
 import warnings
 
 import mlx.optimizers as optim
-import numpy as np
 from mlx_lm.tuner.trainer import (TrainingArgs, default_loss, evaluate, train, iterate_batches,
                                   iterate_delineated_batches, input_masked_loss)
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.utils import load, save_config
 from mlx_lm.lora import print_trainable_parameters
-from mlx_tuning_fork.tuning.utils import create_delineated_batches
 from mlx_lm.tuner.datasets import load_dataset
 from types import SimpleNamespace
-import mlx.core as mx
 from tqdm import tqdm
-import mlx.nn as nn
 import click
 import yaml
 import math
@@ -21,49 +17,6 @@ from mlx_tuning_fork.reporting import WandbCallback
 from pathlib import Path
 from pprint import pprint
 
-
-def completions_only_loss(model, inputs, input_lengths, lengths):
-    shifted_inputs = inputs[:, :-1]
-    shifted_labels = inputs[:, 1:]
-    logits = model(shifted_inputs)
-    logits = logits.astype(mx.float32)
-
-    mask_width = shifted_inputs.shape[1]
-    token_indices = mx.arange(mask_width)[None, :]
-    mask = mx.logical_and(token_indices >= input_lengths[:, None], token_indices < lengths[:, None])
-
-    ce = nn.losses.cross_entropy(logits, shifted_labels) * mask
-    ntoks = mask.sum()
-    ce = ce.sum() / ntoks
-    return ce, ntoks
-
-
-def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
-    idx = sorted(range(len(dataset)), key=lambda i: len(dataset[i]))
-    if len(dataset) < batch_size:
-        raise ValueError(
-            f"Dataset must have at least batch_size={batch_size}"
-            f" examples but only has {len(dataset)}."
-        )
-
-    # Make the batches:
-    batch_idx = [
-        idx[i: i + batch_size] for i in range(0, len(idx) - batch_size + 1, batch_size)
-    ]
-    while True:
-        indices = np.random.permutation(len(batch_idx))
-        for i in indices:
-            input_text = []
-            output_text = []
-
-            for j in batch_idx[i]:
-                record = dataset[j]
-                input_text.append(prompt_formatter.get_input(record))
-                output_text.append(prompt_formatter.get_output(record))
-            yield create_delineated_batches(input_text, output_text, tokenizer, max_seq_length=max_seq_length)
-
-        if not train:
-            break
 
 ALL_TRAIN_TYPES = ['lora-completion-only', 'dora-completion-only', 'lora-self-supervised',
                    'dora-self-supervised']
@@ -185,7 +138,6 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
         f"and saving the adapter every {scaled_save_every:,} steps."
     )
 
-    iterate_batches_fn = completions_only_iterate_batches if completion_only_training else iterate_batches
     if not summary:
         # Resume training the given adapters.
         if args.resume_adapter_file is not None:
@@ -246,8 +198,10 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                 tokenizer=tokenizer,
                 batch_size=args.batch_size,
                 num_batches=args.test_batches,
-                loss=completions_only_loss,
-                iterate_batches=completions_only_iterate_batches
+                loss=input_masked_loss if mask_inputs else default_loss,
+                iterate_batches=(
+                    iterate_delineated_batches if mask_inputs else iterate_batches
+                ),
             )
 
             test_ppl = math.exp(test_loss)
@@ -260,7 +214,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
         _lengths = []
         for it, (batch, input_lengths, lengths) in zip(
                 range(1, num_iterations + 1),
-                iterate_batches_fn(
+                (iterate_delineated_batches if mask_inputs else iterate_batches)(
                     dataset=train_set,
                     tokenizer=tokenizer,
                     batch_size=args.batch_size,
