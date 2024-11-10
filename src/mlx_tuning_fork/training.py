@@ -158,7 +158,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                 )
             )
             if mask_inputs:
-                print(f"Masking inputs")
+                print("Masking inputs")
             train(
                 model=model,
                 tokenizer=tokenizer,
