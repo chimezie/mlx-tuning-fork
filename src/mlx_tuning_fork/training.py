@@ -2,12 +2,13 @@ import warnings
 
 import mlx.optimizers as optim
 import numpy as np
-from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
-from mlx_lm.tuner.utils import linear_to_lora_layers
+from mlx_lm.tuner.trainer import (TrainingArgs, default_loss, evaluate, train, iterate_batches,
+                                  iterate_delineated_batches, input_masked_loss)
+from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.utils import load, generate, save_config
 from mlx_lm.lora import print_trainable_parameters
 from mlx_tuning_fork.tuning.utils import create_delineated_batches
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
+from mlx_lm.tuner.datasets import load_dataset
 from types import SimpleNamespace
 import mlx.core as mx
 from tqdm import tqdm
@@ -15,10 +16,8 @@ import mlx.nn as nn
 import click
 import yaml
 import math
-from mlx_tuning_fork.dataset import Dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter, PROMPT_FORMATS
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
 from pathlib import Path
 from pprint import pprint
 
@@ -80,12 +79,13 @@ PEFT_TYPES = ['lora-self-supervised', 'dora-self-supervised'] + COMPLETION_ONLY_
               default="lora-completion-only")
 @click.option('-f', '--prompt-format',
               type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
+@click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.option('--wandb-project', default=None, type=str,
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
 @click.argument('config_file')
-def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, config_file):
+def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project, wandb_run, config_file):
     global prompt_formatter
     prompt_formatter = get_prompt_formatter(prompt_format)
     tokenizer_config = {}
@@ -131,11 +131,7 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         wandb.init(project=wandb_project, name=wandb_run, config=config)
 
     print("Loading datasets")
-    names = ("train", "valid", "test")
-    if train_type in ('lora-completion-only', 'dora-completion-only', 'debug'):
-        train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
-    else:
-        train_set, valid_set, test_set = (mlx_lm_dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+    train_set, valid_set, test_set = load_dataset(args, tokenizer)
 
     if args.train and len(train_set) == 0:
         raise ValueError(
@@ -191,13 +187,6 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
 
     iterate_batches_fn = completions_only_iterate_batches if completion_only_training else iterate_batches
     if not summary:
-
-        if "learning_schedule" in config:
-            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
-                config["learning_schedule"]["type"]].from_configuration(args.learning_rate, config, num_iterations)
-        else:
-            scheduler = args.learning_rate
-
         # Resume training the given adapters.
         if args.resume_adapter_file is not None:
             print(f"Loading pretrained adapters from {args.resume_adapter_file}")
@@ -208,31 +197,31 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         save_config(vars(args), adapter_path / "adapter_config.json")
         adapter_file = adapter_path / "adapters.safetensors"
 
-        training_args = TrainingArgs(
-            batch_size=args.batch_size,
-            iters=num_iterations,
-            val_batches=scaled_val_batches,
-            steps_per_report=scaled_steps_per_report,
-            steps_per_eval=scaled_steps_per_eval,
-            steps_per_save=scaled_save_every,
-            adapter_file=adapter_file,
-            max_seq_length=args.max_seq_length,
-            grad_checkpoint=args.grad_checkpoint,
-        )
-
         if args.train:
             print("Training")
             model.train()
-            opt = optim.Adam(learning_rate=scheduler)
+            opt = optim.Adam(
+                learning_rate=(
+                    build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
+                )
+            )
             train(
-                model,
-                tokenizer,
-                opt,
-                train_set,
-                valid_set,
-                args=training_args,
-                loss=completions_only_loss if completion_only_training else default_loss,
-                iterate_batches=iterate_batches_fn,
+                model=model,
+                tokenizer=tokenizer,
+                optimizer=opt,
+                train_set=train_set,
+                valid_set=valid_set,
+                args=TrainingArgs(batch_size=args.batch_size,
+                                  ters=num_iterations,
+                                  val_batches=scaled_val_batches,
+                                  steps_per_report=scaled_steps_per_report,
+                                  steps_per_eval=scaled_steps_per_eval,
+                                  steps_per_save=scaled_save_every,
+                                  max_seq_length=args.max_seq_length),
+                iterate_batches=(
+                    iterate_delineated_batches if args.mask_inputs else iterate_batches
+                ),
+                loss=input_masked_loss if mask_inputs else default_loss,
                 training_callback=training_callback
             )
 
