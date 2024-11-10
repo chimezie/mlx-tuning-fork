@@ -205,6 +205,8 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                     build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
                 )
             )
+            if mask_inputs:
+                print(f"Masking inputs")
             train(
                 model=model,
                 tokenizer=tokenizer,
