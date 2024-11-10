@@ -1,4 +1,3 @@
-import pytest
 import os
 import mlx.core as mx
 from mlx_lm.utils import load

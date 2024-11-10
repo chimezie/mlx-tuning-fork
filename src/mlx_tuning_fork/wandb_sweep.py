@@ -10,7 +10,7 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from .config import yaml_loader, get_prompt_formatter, PROMPT_FORMATS
+from .config import get_prompt_formatter, PROMPT_FORMATS
 from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
 from mlx_lm.utils import load
 from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
