@@ -212,7 +212,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                 train_set=train_set,
                 valid_set=valid_set,
                 args=TrainingArgs(batch_size=args.batch_size,
-                                  ters=num_iterations,
+                                  iters=num_iterations,
                                   val_batches=scaled_val_batches,
                                   steps_per_report=scaled_steps_per_report,
                                   steps_per_eval=scaled_steps_per_eval,
