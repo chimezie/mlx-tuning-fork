@@ -219,7 +219,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                                   steps_per_save=scaled_save_every,
                                   max_seq_length=args.max_seq_length),
                 iterate_batches=(
-                    iterate_delineated_batches if args.mask_inputs else iterate_batches
+                    iterate_delineated_batches if mask_inputs else iterate_batches
                 ),
                 loss=input_masked_loss if mask_inputs else default_loss,
                 training_callback=training_callback
