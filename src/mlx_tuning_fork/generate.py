@@ -143,7 +143,6 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
         prompt,
         num_tokens,
         verbose=True,
-        formatter=formatter,
         temp=temperature,
         repetition_penalty=repetition_penalty,
         repetition_context_size=repetition_context_size,
