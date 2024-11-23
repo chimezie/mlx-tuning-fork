@@ -214,8 +214,8 @@ DEFAULT_SEED = 0
 @click.option('--verbose/--no-verbose', default=False)
 @click.option('--seed', type=int, default=DEFAULT_SEED)
 @click.option('-b', '--batch-size', type=int, default=4)
-@click.argument('--model-name-or-path')
-@click.argument('--output_dir', default=None)
+@click.argument('model-name-or-path')
+@click.argument('output_dir', default=None)
 @click.argument('config_file')
 def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config_file):
     np.random.seed(seed)
@@ -232,8 +232,8 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
             tokenizer_config["eos_token"] = param_dict["eos_token"]
         args = SimpleNamespace(**param_dict)
     if args.evals_per_epoch % args.batch_size != 0:
-        print('WARNING: eval_every must be divisible by batch_size')
-        print('Setting eval_every to', args.evals_per_epoch - args.evals_per_epoch % args.batch_size)
+        print('WARNING: evals_per_epoch must be divisible by batch_size')
+        print('Setting evals_per_epoch to', args.evals_per_epoch - args.evals_per_epoch % args.batch_size)
         args.evals_per_epoch = args.evals_per_epoch - args.evals_per_epoch % args.batch_size
 
     print('building policy')
