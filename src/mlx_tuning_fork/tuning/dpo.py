@@ -59,14 +59,13 @@ class PreferenceDataset(ChatDataset):
         return self.get_preference_item_with_kwargs(idx, record_type="chosen")
 
 
-def compute_ref_log_probs(model, shifted_inputs, loss_mask, batch_size):
-    policy_chosen_logits = model(shifted_inputs)
-    policy_chosen_logits = policy_chosen_logits.astype(mx.float32)
-    per_token_log_pros = mx.log(mx.softmax(policy_chosen_logits, axis=-1))
-    all_log_probs = (per_token_log_pros * loss_mask).sum(axis=-1)
+def compute_log_probs(model, shifted_inputs, loss_mask, batch_size):
+    policy_chosen_logits = model(shifted_inputs).astype(mx.float32)
+    per_token_log_probs = mx.log(mx.softmax(policy_chosen_logits, axis=-1))
+    per_token_log_probs = (per_token_log_probs * loss_mask).sum(axis=-1)
     num_chosen = int(batch_size / 2)
-    chosen_log_probs = all_log_probs[:num_chosen]
-    rejected_log_probs = all_log_probs[num_chosen:]
+    chosen_log_probs = per_token_log_probs[:num_chosen]
+    rejected_log_probs = per_token_log_probs[num_chosen:]
     return chosen_log_probs, rejected_log_probs
 
 
@@ -78,11 +77,31 @@ class MLXDirectPreferenceOptimizer:
         self.metrics = {}
 
     def input_masked_policy_metrics(self,
-                                    model: nn.Modle,
+                                    model: nn.Module,
                                     inputs: mx.array,
                                     input_lengths: mx.array,
                                     lengths: mx.array):
-        """Compute DPO losses and other metrics for the given batch of inputs."""
+        """
+        Computes policy metrics for input-masked sequences using the specified model
+        and compares them to a reference model.
+
+        This function calculates log probabilities for chosen and rejected completions,
+        computes rewards and accuracies, and returns losses.
+
+        :param model:
+            Neural network model to be used for computing log probabilities.
+        :param inputs:
+            Input array of sequences.
+        :param input_lengths:
+            Array containing the lengths of input sequences.
+        :param lengths:
+            Array containing the full lengths of sequences including completions.
+        :return:
+            Tuple containing:
+
+            - Mean loss value.
+            - Losses normalized by the length of the mask
+        """
         shifted_inputs = inputs[:, :-1]
         batch_size = lengths.shape[0]
         completion_mask_width = shifted_inputs.shape[1]
@@ -92,11 +111,11 @@ class MLXDirectPreferenceOptimizer:
         loss_mask = mx.logical_and(token_indices >= input_lengths[:, None], token_indices < lengths[:, None])
 
         #Get log probabilities of chosen and rejected completions using current model
-        chosen_log_probs, rejected_log_probs = compute_ref_log_probs(model, shifted_inputs, loss_mask, batch_size)
+        chosen_log_probs, rejected_log_probs = compute_log_probs(model, shifted_inputs, loss_mask, batch_size)
 
         # Get log probabilities of chosen and rejected completions using reference model
-        ref_chosen_log_probs, ref_rejected_log_probs = compute_ref_log_probs(self.ref_model, shifted_inputs, loss_mask,
-                                                                             batch_size)
+        ref_chosen_log_probs, ref_rejected_log_probs = compute_log_probs(self.ref_model, shifted_inputs, loss_mask,
+                                                                         batch_size)
         metrics = {}
 
         losses = self.args.dpo_loss_fn((chosen_log_probs - rejected_log_probs) -
