@@ -37,3 +37,4 @@ where = ["src"]
 [project.scripts]
 mlx_tuning_fork_generate = "mlx_tuning_fork.generate:main"
 mlx_tuning_fork_training = "mlx_tuning_fork.training:main"
+mlx_tuning_fork_dpo = "mlx_tuning_fork.tuning.dpo:click_main"
