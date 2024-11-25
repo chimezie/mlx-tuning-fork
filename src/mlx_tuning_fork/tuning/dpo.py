@@ -7,7 +7,7 @@ import mlx.optimizers as optim
 import mlx.core as mx
 import mlx.nn as nn
 
-from typing import Set, List, Tuple, Callable
+from typing import List, Tuple, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from pathlib import Path
@@ -15,7 +15,7 @@ from pathlib import Path
 from mlx_lm.utils import load, save_config
 from mlx_lm.tuner.utils import build_schedule
 from mlx_lm.tuner.trainer import iterate_batches, TrainingArgs, TrainingCallback, train
-from mlx_lm.tuner.datasets import load_dataset, ChatDataset
+from mlx_lm.tuner.datasets import load_dataset, ChatDataset, load_custom_hf_dataset
 
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 
@@ -40,6 +40,19 @@ class PreferenceDataset(ChatDataset):
     Specialization for preference ChatDatasets to provide chat-templated encoding and prompt/completion
     pairs for chosen and rejected preference dataset records
     """
+    def __len__(self):
+        if self._data is None:
+            return 0
+        return len(self._data)
+
+    def __init__(
+        self,
+        dataset: ChatDataset,
+        tokenizer: transformers.PreTrainedTokenizer,
+    ):
+        super().__init__(dataset, tokenizer)
+        self._tokenizer = tokenizer
+
     def get_preference_item_with_kwargs(self, idx: int, record_type: str = "chosen", tokenize: bool = False,
                                         add_generation_prompt: bool = True):
         messages = self._data[idx][record_type]
@@ -55,17 +68,27 @@ class PreferenceDataset(ChatDataset):
         completion = [record for record in self._data[idx][record_type] if record['role'] == 'assistant'][0]['content']
         return prompt, completion
 
+    def ordered_indices(self):
+        return map(lambda i: i[0],
+                   enumerate(sorted(self._data,
+                                    key=lambda record: max(len(record["chosen"]), len(record["rejected"])))))
+
     def __getitem__(self, idx: int):
-        return self.get_preference_item_with_kwargs(idx, record_type="chosen")
+        return self.get_preference_item_with_kwargs(idx)
 
 
 def compute_log_probs(model, shifted_inputs, loss_mask, batch_size):
     policy_chosen_logits = model(shifted_inputs).astype(mx.float32)
+
+    #Log probabilities: log-softmax of logits over vocabulary dimension
     per_token_log_probs = mx.log(mx.softmax(policy_chosen_logits, axis=-1))
-    per_token_log_probs = (per_token_log_probs * loss_mask).sum(axis=-1)
+    # print(per_token_log_probs.shape, loss_mask.shape)
+
+    #Condtional log likelihood of target given the input
+    target_token_only_log_probs = mx.where(loss_mask[..., None], per_token_log_probs, 0).sum(axis=-1)
     num_chosen = int(batch_size / 2)
-    chosen_log_probs = per_token_log_probs[:num_chosen]
-    rejected_log_probs = per_token_log_probs[num_chosen:]
+    chosen_log_probs = target_token_only_log_probs[:num_chosen]
+    rejected_log_probs = target_token_only_log_probs[num_chosen:]
     return chosen_log_probs, rejected_log_probs
 
 
@@ -108,13 +131,13 @@ class MLXDirectPreferenceOptimizer:
         token_indices = mx.arange(completion_mask_width)[None, :]
 
         #Mask excluding input (prompt) tokens and suffix padding
-        loss_mask = mx.logical_and(token_indices >= input_lengths[:, None], token_indices < lengths[:, None])
+        mask = mx.logical_and(token_indices >= input_lengths[:, None], token_indices < lengths[:, None])
 
-        #Get log probabilities of chosen and rejected completions using current model
-        chosen_log_probs, rejected_log_probs = compute_log_probs(model, shifted_inputs, loss_mask, batch_size)
+        #Get log probabilities of chosen and rejected target tokens using current model
+        chosen_log_probs, rejected_log_probs = compute_log_probs(model, shifted_inputs, mask, batch_size)
 
-        # Get log probabilities of chosen and rejected completions using reference model
-        ref_chosen_log_probs, ref_rejected_log_probs = compute_log_probs(self.ref_model, shifted_inputs, loss_mask,
+        # Get log probabilities of chosen and rejected target tokens using reference model
+        ref_chosen_log_probs, ref_rejected_log_probs = compute_log_probs(self.ref_model, shifted_inputs, mask,
                                                                          batch_size)
         metrics = {}
 
@@ -123,17 +146,17 @@ class MLXDirectPreferenceOptimizer:
                                        self.args)
         chosen_rewards = self.args.beta * (chosen_log_probs - ref_chosen_log_probs)
         rejected_rewards = self.args.beta * (rejected_log_probs - ref_rejected_log_probs)
-        reward_accuracies = (chosen_rewards > rejected_rewards).item()
+        reward_accuracies = chosen_rewards > rejected_rewards
 
         #@TODO: log/write using training_callback mechanism
-        metrics["rewards/chosen"] = chosen_rewards.mean().cpu()
-        metrics["rewards/rejected"] = rejected_rewards.mean().cpu()
-        metrics["rewards/accuracies"] = reward_accuracies.mean().cpu()
-        metrics["rewards/margins"] = (chosen_rewards - rejected_rewards).mean().cpu()
+        metrics["rewards/chosen"] = chosen_rewards.mean()
+        metrics["rewards/rejected"] = rejected_rewards.mean()
+        metrics["rewards/accuracies"] = reward_accuracies.mean()
+        metrics["rewards/margins"] = (chosen_rewards - rejected_rewards).mean()
         metrics["logps/chosen"] = chosen_log_probs.mean()
         metrics["logps/rejected"] = rejected_log_probs.mean()
-
-        return losses.mean(), losses.sum() / loss_mask.sum()
+        print(metrics)
+        return losses.mean(), losses.sum() / mask.sum()
 
     def iterate_input_masked_dpo_batches(self, dataset: PreferenceDataset, tokenizer: transformers.PreTrainedTokenizer,
                                          batch_size: int, max_seq_length: int, train: bool = False,
@@ -218,6 +241,7 @@ DEFAULT_SEED = 0
 @click.argument('output_dir', default=None)
 @click.argument('config_file')
 def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config_file):
+    import datasets
     np.random.seed(seed)
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)
@@ -260,8 +284,12 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
     assert args.lora_parameters["dropout"] == 0.0
     #disable_dropout(policy)
 
-    train_set, valid_set, test_set = load_dataset(args, tokenizer)
-
+    train_set = PreferenceDataset(datasets.load_dataset(args.hf_dataset["name"],split="train",
+                                                        #**args.get("config", {})
+                                                        ), tokenizer=tokenizer)
+    valid_set = PreferenceDataset(datasets.load_dataset(args.hf_dataset["name"], split="test",
+                                                        #**args.get("config", {})
+                                                        ), tokenizer=tokenizer)
     epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
     if args.epochs == -1:
         num_iterations = epoch_num_steps if args.iters == -1 else args.iters
@@ -317,20 +345,19 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
 
     dpo_trainer = MLXDirectPreferenceOptimizer(dpo_args, policy, ref_model)
 
-    if args.train:
-        print("Training")
-        policy.train()
-        train(
-            policy,
-            tokenizer,
-            opt,
-            train_set,
-            valid_set,
-            args=training_args,
-            loss=dpo_trainer.input_masked_policy_metrics,
-            iterate_batches=dpo_trainer.iterate_input_masked_dpo_batches,
-            # training_callback=training_callback
-        )
+    print("Training")
+    policy.train()
+    train(
+        policy,
+        tokenizer,
+        opt,
+        train_set,
+        valid_set,
+        args=training_args,
+        loss=dpo_trainer.input_masked_policy_metrics,
+        iterate_batches=dpo_trainer.iterate_input_masked_dpo_batches,
+        # training_callback=training_callback
+    )
 
 
 def contains(small_list: List, big_list: List) -> Tuple[int, int]:
