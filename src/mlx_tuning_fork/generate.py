@@ -5,6 +5,7 @@ from ogbujipt import word_loom
 from ogbujipt.prompting import format
 import mlx.core as mx
 from mlx_lm.utils import load, generate
+from mlx_lm.sample_utils import make_sampler
 
 DEFAULT_SEED = 0
 
@@ -140,19 +141,16 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
     if loom_file:
         prompt = generate_prompt_from_loom(loom_file, loom_markers, get_prompt_formatter(prompt_format), build_prompt,
                                            cot_source, tokenizer)
+    sampler = make_sampler(temperature, 1, min_p, min_p_tokens)
+
     generate(
         model,
         tokenizer,
         prompt,
-        num_tokens,
+        max_tokens=num_tokens,
         verbose=True,
         formatter=formatter,
-        temp=temperature,
-        repetition_penalty=repetition_penalty,
-        repetition_context_size=repetition_context_size,
-        top_p=top_p,
-        min_p=min_p,
-        min_tokens_to_keep=min_p_tokens
+        sampler=sampler
     )
     if colorize:
         print(f"\033[1m\033[39m prop. > .8 \033[0m", end="", flush=True)
