@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 from mlx_lm.utils import load, save_config, load_adapters
+from mlx.utils import tree_flatten
 from mlx_lm.tuner.utils import build_schedule
 from mlx_lm.tuner.trainer import iterate_batches, TrainingArgs, TrainingCallback, train
 from mlx_lm.tuner.datasets import load_dataset, ChatDataset, load_custom_hf_dataset
@@ -276,12 +277,6 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
         num_iterations = epoch_num_steps * args.epochs
     num_iterations = int(num_iterations)
 
-    print(
-        f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
-        f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
-        f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(policy.layers)}"
-    )
-
     if args.evals_per_epoch:
         scaled_steps_per_eval = int(epoch_num_steps / args.evals_per_epoch)
         scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
@@ -310,8 +305,17 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
     save_config(vars(args), adapter_path / "adapter_config.json")
     adapter_file = adapter_path / "adapters.safetensors"
 
-    policy = load_adapters(deepcopy(ref_model), output_dir)
+    policy = deepcopy(ref_model)
+    mx.save_safetensors(str(adapter_file), dict(tree_flatten(policy.trainable_parameters())))
+
+    policy = load_adapters(policy, output_dir)
     policy.freeze()
+
+    print(
+        f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
+        f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
+        f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(policy.layers)}"
+    )
 
     dpo_args = DPOArgs()
     training_args = TrainingArgs(
