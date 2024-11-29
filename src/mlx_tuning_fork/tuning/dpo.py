@@ -114,7 +114,7 @@ class MLXDirectPreferenceOptimizer:
         computes rewards and accuracies, and returns losses.
 
         :param model:
-            Neural network model to be used for computing log probabilities.
+            model to be used for computing log probabilities.
         :param inputs:
             Input array of sequences.
         :param input_lengths:
@@ -125,7 +125,7 @@ class MLXDirectPreferenceOptimizer:
             Tuple containing:
 
             - Mean loss value.
-            - Losses normalized by the length of the mask
+            - Losses normalized by the length of the full sequence
         """
         shifted_inputs = inputs[:, :-1]
         batch_size = lengths.shape[0]
@@ -143,9 +143,9 @@ class MLXDirectPreferenceOptimizer:
                                                                          batch_size)
         metrics = {}
 
-        losses = self.args.dpo_loss_fn((chosen_log_probs - rejected_log_probs) -
-                                       (ref_chosen_log_probs - ref_rejected_log_probs),
-                                       self.args)
+        ref_chosen_logps_diff = (ref_chosen_log_probs - ref_rejected_log_probs)
+        chosen_logps_diff = (chosen_log_probs - rejected_log_probs)
+        losses = self.args.dpo_loss_fn(chosen_logps_diff - ref_chosen_logps_diff, self.args)
         chosen_rewards = self.args.beta * (chosen_log_probs - ref_chosen_log_probs)
         rejected_rewards = self.args.beta * (rejected_log_probs - ref_rejected_log_probs)
         reward_accuracies = chosen_rewards > rejected_rewards
@@ -157,7 +157,7 @@ class MLXDirectPreferenceOptimizer:
         metrics["rewards/margins"] = (chosen_rewards - rejected_rewards).mean()
         metrics["logps/chosen"] = chosen_log_probs.mean()
         metrics["logps/rejected"] = rejected_log_probs.mean()
-        print(metrics)
+        # print(metrics)
         return losses.mean(), losses.sum() / mask.sum()
 
     def iterate_input_masked_dpo_batches(self, dataset: PreferenceDataset, tokenizer: transformers.PreTrainedTokenizer,
@@ -195,10 +195,11 @@ class MLXDirectPreferenceOptimizer:
                     for record_type in ["chosen", "rejected"]:
                         prompt, completion = dataset.get_prompt_and_completion(j, record_type=record_type)
                         prompt_lengths.append(input_length(prompt, completion, tokenizer))
-                        full_chat_templated_sequence = dataset.get_full_encoding(j, record_type=record_type)
-                        if full_chat_templated_sequence[-1] != tokenizer.eos_token_id:
-                            full_chat_templated_sequence.append(tokenizer.eos_token_id)
-                        batch.append(full_chat_templated_sequence)
+                        full_sequence_wo_special_tokens = tokenizer.encode(prompt + completion,
+                                                                           add_special_tokens = False)
+                        if full_sequence_wo_special_tokens[-1] != tokenizer.eos_token_id:
+                            full_sequence_wo_special_tokens.append(tokenizer.eos_token_id)
+                        batch.append(full_sequence_wo_special_tokens)
 
                 lengths = [len(x) for x in batch]
 
@@ -367,14 +368,8 @@ def input_length(
     Returns the length of the portion of the encoding of the concatenation of input_text and output_text
     that corresponds to the input tokens.
     """
-    message = [
-        {"role": "user", "content": input_text},
-        {"role": "assistant", "content": output_text},
-    ]
-    output_tokens = no_bos(tokenizer.encode(output_text), tokenizer.bos_token_id)
-    full_sequence = tokenizer.apply_chat_template(
-        message, add_generation_prompt=True, tokenize=True
-    )
+    output_tokens = no_bos(tokenizer.encode(output_text, add_special_tokens=False), tokenizer.bos_token_id)
+    full_sequence = tokenizer.encode(input_text + output_text, add_special_tokens=False)
     output_begin, output_end = contains(output_tokens, full_sequence)
     return output_begin
 
