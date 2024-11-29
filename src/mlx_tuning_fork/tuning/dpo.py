@@ -7,12 +7,13 @@ import mlx.optimizers as optim
 import mlx.core as mx
 import mlx.nn as nn
 
+from copy import deepcopy
 from typing import List, Tuple, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from pathlib import Path
 
-from mlx_lm.utils import load, save_config
+from mlx_lm.utils import load, save_config, load_adapters
 from mlx_lm.tuner.utils import build_schedule
 from mlx_lm.tuner.trainer import iterate_batches, TrainingArgs, TrainingCallback, train
 from mlx_lm.tuner.datasets import load_dataset, ChatDataset, load_custom_hf_dataset
@@ -169,11 +170,6 @@ class MLXDirectPreferenceOptimizer:
         the full (chosen/rejected) sequences for masking purposes.
         """
         idx = sorted(range(len(dataset)), key=lambda i: len(dataset[i]))
-        if len(dataset) < batch_size:
-            raise ValueError(
-                f"Dataset must have at least batch_size={batch_size}"
-                f" examples but only has {len(dataset)}."
-            )
 
         # If running in distributed mode (N machines) then each one should skip N-1
         # samples
@@ -204,13 +200,6 @@ class MLXDirectPreferenceOptimizer:
                         batch.append(full_chat_templated_sequence)
 
                 lengths = [len(x) for x in batch]
-
-                if max(lengths) > max_seq_length:
-                    print(
-                        f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
-                        f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
-                        "Consider pre-splitting your data to save memory."
-                    )
 
                 # Pad to the nearest multiple of 8 or the maximum length
                 pad_to = 8
@@ -262,19 +251,7 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
 
     print('building policy')
 
-    policy, tokenizer = load(model_name_or_path, tokenizer_config=tokenizer_config)
-    policy.freeze()
-
-    # if args.resume_adapter_file is not None:
-    #     print(f"Loading pretrained adapters from {args.resume_adapter_file}")
-    #     policy.load_weights(args.resume_adapter_file, strict=False)
-
-    ref_model, _ = load(model_name_or_path,#args.ref_model,
-                        tokenizer_config=tokenizer_config)
-
-    # if args.ref_model_resume_adapter_file is not None:
-    #     print(f"Loading pretrained adapters from {args.resume_adapter_file}")
-    #     ref_model.load_weights(args.ref_model_resume_adapter_file, strict=False)
+    ref_model, tokenizer = load(model_name_or_path, tokenizer_config=tokenizer_config)
 
     opt = optim.Adam(
         learning_rate=(
@@ -284,11 +261,13 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
     assert args.lora_parameters["dropout"] == 0.0
     #disable_dropout(policy)
 
-    train_set = PreferenceDataset(datasets.load_dataset(args.hf_dataset["name"],split="train",
-                                                        #**args.get("config", {})
+    train_set = PreferenceDataset(datasets.load_dataset(args.hf_dataset["name"],
+                                                        split="train",
+                                                        **args.hf_dataset.get("config", {})
                                                         ), tokenizer=tokenizer)
-    valid_set = PreferenceDataset(datasets.load_dataset(args.hf_dataset["name"], split="test",
-                                                        #**args.get("config", {})
+    valid_set = PreferenceDataset(datasets.load_dataset(args.hf_dataset["name"],
+                                                        split="test",
+                                                        **args.hf_dataset.get("config", {})
                                                         ), tokenizer=tokenizer)
     epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
     if args.epochs == -1:
@@ -330,6 +309,9 @@ def click_main(verbose, seed, batch_size, model_name_or_path, output_dir, config
     adapter_path.mkdir(parents=True, exist_ok=True)
     save_config(vars(args), adapter_path / "adapter_config.json")
     adapter_file = adapter_path / "adapters.safetensors"
+
+    policy = load_adapters(deepcopy(ref_model), output_dir)
+    policy.freeze()
 
     dpo_args = DPOArgs()
     training_args = TrainingArgs(
