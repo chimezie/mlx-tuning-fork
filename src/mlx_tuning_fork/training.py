@@ -1,6 +1,6 @@
 import mlx.optimizers as optim
 from mlx_lm.tuner.trainer import (TrainingArgs, default_loss, evaluate, train, iterate_batches,
-                                  iterate_delineated_batches, input_masked_loss)
+                                  iterate_completion_batches, input_masked_loss)
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.utils import load, save_config
 from mlx_lm.lora import print_trainable_parameters
@@ -169,7 +169,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                                   steps_per_save=scaled_save_every,
                                   max_seq_length=args.max_seq_length),
                 iterate_batches=(
-                    iterate_delineated_batches if mask_inputs else iterate_batches
+                    iterate_completion_batches if mask_inputs else iterate_batches
                 ),
                 loss=input_masked_loss if mask_inputs else default_loss,
                 training_callback=training_callback
@@ -196,7 +196,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                 num_batches=args.test_batches,
                 loss=input_masked_loss if mask_inputs else default_loss,
                 iterate_batches=(
-                    iterate_delineated_batches if mask_inputs else iterate_batches
+                    iterate_completion_batches if mask_inputs else iterate_batches
                 ),
             )
 
@@ -210,7 +210,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
         _lengths = []
         for it, (batch, input_lengths, lengths) in zip(
                 range(1, num_iterations + 1),
-                (iterate_delineated_batches if mask_inputs else iterate_batches)(
+                (iterate_completion_batches if mask_inputs else iterate_batches)(
                     dataset=train_set,
                     tokenizer=tokenizer,
                     batch_size=args.batch_size,
