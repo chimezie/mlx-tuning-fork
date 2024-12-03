@@ -45,7 +45,7 @@ CONFIG_DEFAULTS = {
     "train": False,
     "data": "data/",
     "temp": 0.6,
-    "top_p": 1.0,
+    "top_p": 0,
     "num_layers": 16,
     "evals_per_epoch": None,
     "saves_per_epoch": 2,

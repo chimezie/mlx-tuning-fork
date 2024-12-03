@@ -138,12 +138,14 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
     if loom_file:
         prompt = generate_prompt_from_loom(loom_file, loom_markers, get_prompt_formatter(prompt_format), build_prompt,
                                            cot_source, tokenizer)
-    sampler = make_sampler(temperature, 1, min_p, min_p_tokens)
+    sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, min_tokens_to_keep=min_p_tokens)
 
     generate(
         model,
         tokenizer,
         prompt,
+        repetition_context_size=repetition_context_size,
+        repetition_penalty=repetition_penalty,
         max_tokens=num_tokens,
         verbose=True,
         sampler=sampler
