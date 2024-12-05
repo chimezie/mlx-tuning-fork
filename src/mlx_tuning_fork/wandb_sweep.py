@@ -17,7 +17,7 @@ from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
 from mlx_lm.tuner.datasets import load_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.tuner.trainer import (TrainingArgs, train, default_loss, iterate_batches, input_masked_loss,
-                                  iterate_delineated_batches)
+                                  iterate_completion_batches)
 from mlx_lm.lora import CONFIG_DEFAULTS
 
 # 2: Define the search space
@@ -144,7 +144,7 @@ class Sweeper:
                                 steps_per_save=scaled_save_every,
                                 max_seq_length=args.max_seq_length),
             iterate_batches=(
-                iterate_delineated_batches if args.mask_inputs else iterate_batches
+                iterate_completion_batches if args.mask_inputs else iterate_batches
             ),
             loss=input_masked_loss if self.mask_inputs else default_loss,
             training_callback=WandbCallback(tqdm(total=num_iterations))
