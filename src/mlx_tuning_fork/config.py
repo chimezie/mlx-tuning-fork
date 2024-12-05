@@ -65,6 +65,9 @@ CONFIG_DEFAULTS = {
     "save_every": 100,
     "validation_scale": 5,
     "adapter_path": "adapters",
+
+    "hf_datasets": None,
+    
     "reporting_interval_proportion": 0.01, #10/1000
 
     "validation_interval_proportion": 0.2, #200/1000

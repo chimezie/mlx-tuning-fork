@@ -183,9 +183,10 @@ def main(verbose, wandb_project, train_type, prompt_format, mask_inputs, config_
     sweep_id = wandb.sweep(sweep=config["sweep_configuration"], project=wandb_project)
 
     # Update defaults for unspecified parameters
-    for k, v in CONFIG_DEFAULTS.items():
-        if not config.get(k, None):
-            config[k] = v
+    for config_defaults in [CONFIG_DEFAULTS, TF_CONFIG_DEFAULTS]:
+        for k, v in config_defaults.items():
+            if not config.get(k, None):
+                config[k] = v
     global prompt_formatter
     prompt_formatter = get_prompt_formatter(prompt_format)
     wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type, mask_inputs).sweep)
