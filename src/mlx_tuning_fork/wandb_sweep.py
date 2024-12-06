@@ -101,22 +101,24 @@ class Sweeper:
             )
         )
 
-        num_iterations = 200
-        len_train_set = num_iterations
-        len_val_set = int(num_iterations * args.validation_interval_proportion)
-        epoch_num_steps = (len_train_set + args.batch_size - 1) // args.batch_size
+        epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
+        if args.epochs == -1:
+            num_iterations = epoch_num_steps if args.iters == -1 else args.iters
+        else:
+            num_iterations = epoch_num_steps * args.epochs
+        num_iterations = int(num_iterations)
 
         print(
             f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
-            f"{len_train_set :,} records, {args.batch_size} at a time and with a validation set of "
-            f"{len_val_set :,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
+            f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
+            f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
         )
 
         if args.evals_per_epoch:
-            scaled_steps_per_eval = int(num_iterations / args.evals_per_epoch)
-            scaled_val_batches = int(len_val_set * args.eval_proportion_of_total / args.batch_size
+            scaled_steps_per_eval = int(epoch_num_steps / args.evals_per_epoch)
+            scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
                                      ) if args.eval_proportion_of_total else (
-                int(len_val_set / ((args.evals_per_epoch - 1) * args.batch_size))
+                int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size))
             )
         else:
             scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
@@ -124,11 +126,16 @@ class Sweeper:
                 args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
 
         scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
-        scaled_save_every = 1000
+
+        if args.saves_per_epoch:
+            scaled_save_every = int(epoch_num_steps / args.saves_per_epoch)
+        else:
+            scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
 
         print(
-            f"Calculating loss every {scaled_steps_per_eval:,} steps, reporting validation loss every "
-            f"{scaled_steps_per_eval:,} steps, and validating with {scaled_val_batches:,} batches"
+            f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
+            f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
+            f"and saving the adapter every {scaled_save_every:,} steps."
         )
         train(
             model=model,
