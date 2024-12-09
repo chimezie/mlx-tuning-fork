@@ -10,7 +10,7 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from .config import get_prompt_formatter, PROMPT_FORMATS
+from mlx_lm.tokenizer_utils import no_bos_or_eos
 from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
 from mlx_lm.utils import load
 from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
@@ -31,7 +31,8 @@ sweep_configuration = {
 }
 
 class Sweeper:
-    def __init__(self, project_name, config, train_type, mask_inputs):
+    def __init__(self, verbose, project_name, config, train_type, mask_inputs):
+        self.verbose = verbose
         self.project_name = project_name
         self.config = config
         self.train_type = train_type
@@ -46,27 +47,30 @@ class Sweeper:
 
         if "learning_rate" in sweep_parameters:
             self.config["learning_rate"] = wandb_config.learning_rate
-            print(f"learning rate: {self.config['learning_rate']}")
+            if self.verbose:
+                print(f"learning rate: {self.config['learning_rate']}")
         if "rank" in sweep_parameters:
             self.config["lora_parameters"]["rank"] = wandb_config.rank
-            print(f"LoRA rank: {self.config['lora_parameters']['rank']}")
+            if self.verbose:
+                print(f"LoRA rank: {self.config['lora_parameters']['rank']}")
         if "scale" in sweep_parameters:
             self.config["lora_parameters"]["scale"] = wandb_config.scale
-            print(f"LoRA config: {self.config['lora_parameters']['scale']}")
+            if self.verbose:
+                print(f"LoRA config: {self.config['lora_parameters']['scale']}")
         if "dropout" in sweep_parameters:
             self.config["lora_parameters"]["dropout"] = wandb_config.dropout
-            print(f"LoRA dropout: {self.config['lora_parameters']['dropout']}")
+            if self.verbose:
+                print(f"LoRA dropout: {self.config['lora_parameters']['dropout']}")
         if "batch_size" in sweep_parameters:
             self.config["batch_size"] = wandb_config.batch_size
-            print(f"batch size: {self.config['batch_size']}")
+            if self.verbose:
+                print(f"batch size: {self.config['batch_size']}")
         self.config["mask_inputs"] = self.mask_inputs
         self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
         self.config["validation_interval_proportion"] = TF_CONFIG_DEFAULTS["validation_interval_proportion"]
         self.config["validations_per_train_item"] = TF_CONFIG_DEFAULTS["validations_per_train_item"]
         self.config["reporting_interval_proportion"] = TF_CONFIG_DEFAULTS["reporting_interval_proportion"]
         self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
-        if self.mask_inputs:
-            print("Masking inputs")
 
         args = SimpleNamespace(**self.config)
 
@@ -95,11 +99,6 @@ class Sweeper:
 
         print("Training")
         model.train()
-        opt = optim.Adam(
-            learning_rate=(
-                build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
-            )
-        )
 
         epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
         if args.epochs == -1:
@@ -137,6 +136,31 @@ class Sweeper:
             f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
             f"and saving the adapter every {scaled_save_every:,} steps."
         )
+        opt = optim.Adam(
+            learning_rate=(
+                build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
+            )
+        )
+        response_generation_tokens = []
+        if self.mask_inputs:
+            print("Masking inputs")
+            if isinstance(args.response_template, str):
+                response_generation_tokens = tokenizer.encode(
+                    args.response_template, add_special_tokens=False
+                )
+            elif args.response_template == None:
+                raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
+            else:
+                if not all([item.isinstance(int) for item in args.response_template]):
+                    raise ValueError(
+                        "Response template must be a list of integers if it is not a string."
+                    )
+                response_generation_tokens = args.response_template
+            response_generation_tokens = no_bos_or_eos(response_generation_tokens,
+                                                       tokenizer.bos_token_id,
+                                                       tokenizer.eos_token_id
+                                                       ) if len(
+                response_generation_tokens) > 1 else response_generation_tokens
         train(
             model=model,
             tokenizer=tokenizer,
@@ -149,7 +173,8 @@ class Sweeper:
                                 steps_per_report=scaled_steps_per_report,
                                 steps_per_eval=scaled_steps_per_eval,
                                 steps_per_save=scaled_save_every,
-                                max_seq_length=args.max_seq_length),
+                                max_seq_length=args.max_seq_length,
+                                response_generation_tokens=response_generation_tokens),
             iterate_batches=(
                 iterate_completion_batches if args.mask_inputs else iterate_batches
             ),
@@ -164,11 +189,9 @@ class Sweeper:
 @click.option('--train-type',
               type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
               default="lora-completion-only")
-@click.option('-f', '--prompt-format',
-              type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
 @click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.argument('config_file', type=click.File('r'))
-def main(verbose, wandb_project, train_type, prompt_format, mask_inputs, config_file):
+def main(verbose, wandb_project, train_type, mask_inputs, config_file):
     if wandb is None:
         raise ImportError('wandb module not available.  Install with `pip install wandb`')
     yaml_loader = yaml.SafeLoader
@@ -190,13 +213,12 @@ def main(verbose, wandb_project, train_type, prompt_format, mask_inputs, config_
     sweep_id = wandb.sweep(sweep=config["sweep_configuration"], project=wandb_project)
 
     # Update defaults for unspecified parameters
-    for config_defaults in [CONFIG_DEFAULTS, TF_CONFIG_DEFAULTS]:
+    for config_defaults in [{k:v for k,v in CONFIG_DEFAULTS.items() if k not in TF_CONFIG_DEFAULTS},
+                            TF_CONFIG_DEFAULTS]:
         for k, v in config_defaults.items():
             if not config.get(k, None):
                 config[k] = v
-    global prompt_formatter
-    prompt_formatter = get_prompt_formatter(prompt_format)
-    wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type, mask_inputs).sweep)
+    wandb.agent(sweep_id, function=Sweeper(verbose, wandb_project, config, train_type, mask_inputs).sweep)
 
 
 if __name__ == '__main__':

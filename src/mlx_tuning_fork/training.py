@@ -3,9 +3,10 @@ from mlx_lm.tuner.trainer import (TrainingArgs, default_loss, evaluate, train, i
                                   iterate_completion_batches, input_masked_loss)
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.utils import load, save_config
+from mlx_lm.tokenizer_utils import no_bos_or_eos
 from mlx_lm.lora import print_trainable_parameters
 from mlx_lm.tuner.datasets import load_dataset
-from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter, PROMPT_FORMATS
+from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.reporting import WandbCallback
 from pathlib import Path
 from pprint import pprint
@@ -16,11 +17,8 @@ import yaml
 import math
 import warnings
 
-ALL_TRAIN_TYPES = ['lora-completion-only', 'dora-completion-only', 'lora-self-supervised',
-                   'dora-self-supervised']
-DORA_TRAIN_TYPES = ['dora-completion-only', 'dora-self-supervised']
-COMPLETION_ONLY_TYPES = ['lora-completion-only', 'dora-completion-only']
-PEFT_TYPES = ['lora-self-supervised', 'dora-self-supervised'] + COMPLETION_ONLY_TYPES
+ALL_TRAIN_TYPES = ['lora', 'dora']
+DORA_TRAIN_TYPES = ['dora']
 
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
@@ -28,17 +26,13 @@ PEFT_TYPES = ['lora-self-supervised', 'dora-self-supervised'] + COMPLETION_ONLY_
 @click.option('--train-type',
               type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
               default="lora-completion-only")
-@click.option('-f', '--prompt-format',
-              type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
 @click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.option('--wandb-project', default=None, type=str,
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
 @click.argument('config_file')
-def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project, wandb_run, config_file):
-    global prompt_formatter
-    prompt_formatter = get_prompt_formatter(prompt_format)
+def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, config_file):
     tokenizer_config = {}
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)
@@ -133,7 +127,25 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
         f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
         f"and saving the adapter every {scaled_save_every:,} steps."
     )
-
+    response_generation_tokens = []
+    if mask_inputs:
+        print("Masking inputs")
+        if isinstance(args.response_template, str):
+            response_generation_tokens = tokenizer.encode(
+                args.response_template, add_special_tokens=False
+            )
+        elif args.response_template == None:
+            raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
+        else:
+            if not all([item.isinstance(int) for item in args.response_template]):
+                raise ValueError(
+                    "Response template must be a list of integers if it is not a string."
+                )
+            response_generation_tokens = args.response_template
+        response_generation_tokens = no_bos_or_eos(response_generation_tokens,
+                                                   tokenizer.bos_token_id,
+                                                   tokenizer.eos_token_id
+                                                   ) if len(response_generation_tokens) > 1 else response_generation_tokens
     if not summary:
         # Resume training the given adapters.
         if args.resume_adapter_file is not None:
@@ -153,8 +165,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                     build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
                 )
             )
-            if mask_inputs:
-                print("Masking inputs")
+
             train(
                 model=model,
                 tokenizer=tokenizer,
@@ -167,7 +178,9 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                                   steps_per_report=scaled_steps_per_report,
                                   steps_per_eval=scaled_steps_per_eval,
                                   steps_per_save=scaled_save_every,
-                                  max_seq_length=args.max_seq_length),
+                                  max_seq_length=args.max_seq_length,
+                                  response_generation_tokens=response_generation_tokens,
+                                  adapter_file=adapter_file),
                 iterate_batches=(
                     iterate_completion_batches if mask_inputs else iterate_batches
                 ),
@@ -208,7 +221,7 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
         total_num_tokens = 0
         max_tokens = 0
         _lengths = []
-        for it, (batch, input_lengths, lengths) in zip(
+        for it, info in zip(
                 range(1, num_iterations + 1),
                 (iterate_completion_batches if mask_inputs else iterate_batches)(
                     dataset=train_set,
@@ -216,8 +229,10 @@ def main(verbose, summary, train_type, prompt_format, mask_inputs, wandb_project
                     batch_size=args.batch_size,
                     max_seq_length=args.max_seq_length,
                     train=False,
+                    response_generation_tokens=response_generation_tokens
                 )
         ):
+            lengths = info[-1]
             max_tokens = max(max_tokens, max(lengths))
             _lengths.extend(lengths)
             total_num_tokens += sum(lengths)

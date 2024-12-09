@@ -45,7 +45,7 @@ CONFIG_DEFAULTS = {
     "train": False,
     "data": "data/",
     "temp": 0.6,
-    "top_p": 0,
+    "top_p": 1.0,
     "num_layers": 16,
     "evals_per_epoch": None,
     "saves_per_epoch": 2,
@@ -65,9 +65,6 @@ CONFIG_DEFAULTS = {
     "save_every": 100,
     "validation_scale": 5,
     "adapter_path": "adapters",
-
-    "hf_datasets": None,
-    
     "reporting_interval_proportion": 0.01, #10/1000
 
     "validation_interval_proportion": 0.2, #200/1000
@@ -79,5 +76,6 @@ CONFIG_DEFAULTS = {
     "colorize": False,
     "trust_remote_code": False,
     "lora_parameters": {"rank": 8, "alpha": 16, "dropout": 0.0, "scale": 10.0},
-    "grad_checkpoint": False
+    "grad_checkpoint": False,
+    'hf_datasets': []
 }
