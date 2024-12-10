@@ -115,21 +115,18 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
 @click.option('--eos-token', default=None, type=str,
               help='End of sequence token for tokenizer')
 @click.option('--seed', default=DEFAULT_SEED, type=int, help='PRNG seed')
-@click.option("--colorize/--no-colorize", default=False, help="Colorize output based on token probability")
 @click.option("--cot-source", default=None,
               help="The name of the file with an apply chat template structure to use as the basis for a few-shot "
                    "prompt construction")
 @click.argument('model_name')
 def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format, adapter_path, repetition_penalty,
          repetition_context_size, top_p, min_p, min_p_tokens, build_prompt, trust_remote_code, eos_token, seed,
-         colorize, cot_source, model_name):
+         cot_source, model_name):
     tokenizer_config = {}
     if eos_token is not None:
         tokenizer_config["eos_token"] = eos_token
     if trust_remote_code:
         tokenizer_config["trust_remote_code"] = True
-
-    formatter = colorprint_by_t0 if colorize else None
 
     mx.random.seed(seed)
 
@@ -141,24 +138,18 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
     if loom_file:
         prompt = generate_prompt_from_loom(loom_file, loom_markers, get_prompt_formatter(prompt_format), build_prompt,
                                            cot_source, tokenizer)
-    sampler = make_sampler(temperature, 1, min_p, min_p_tokens)
+    sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, min_tokens_to_keep=min_p_tokens)
 
     generate(
         model,
         tokenizer,
         prompt,
+        repetition_context_size=repetition_context_size,
+        repetition_penalty=repetition_penalty,
         max_tokens=num_tokens,
         verbose=True,
-        formatter=formatter,
         sampler=sampler
     )
-    if colorize:
-        print(f"\033[1m\033[39m prop. > .8 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[36m .6 < prob <= .8 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[32m .4 < prob <= .6 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[33m .2 < prob <= .4 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[31m < .3 \033[0m", end="", flush=True)
-        print("\n")
 
 if __name__ == '__main__':
     main()

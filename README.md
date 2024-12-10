@@ -18,27 +18,17 @@ You can get documentation of the command-line options for the fine-tuning comman
 
 ```commandline
 % mlx_tuning_fork_training --help
-Usage: python -m mlx_tuning_fork.training [OPTIONS] CONFIG_FILE
+Usage: mlx_tuning_fork_training [OPTIONS] CONFIG_FILE
 
 Options:
   --verbose / --no-verbose
   --summary / --no-summary        Just summarize training data
-  --train-type [lora-completion-only|dora-completion-only|lora-self-supervised|dora-self-supervised]
-  -f, --prompt-format [mistral|chatml|llama3|alpaca|phi|gemma]
+  --train-type [lora|dora]
+  --mask-inputs / --no-mask-inputs
   --wandb-project TEXT            Wandb project name
   --wandb-run TEXT                Wandb run name
   --help                          Show this message and exit.
 ```
-
-The format of the prompts used to train the model is specified via the `-f/--prompt-format` option, which currently
-is one of:
-
-- mistra
-- chatml
-- llama3
-- alpaca
-- phi
-- gemma
 
 ## Configuration
 
@@ -73,37 +63,13 @@ In particular, the following additional configurations can be used to automatica
 * **adapter_save_interval_proportion** (Same proportions for intervals between saving the LoRa adapter - defaults to .1)
     * Used to determine `save_ever` if `saves_per_epoch` is not provided
 
-## Learning Rate Schedules
-
-Learning rate schedulers can be specified in the configuration file with a section such as the following (
-for Cosine annealing):
-
-```yaml
-learning_schedule:
-  type: "cosine"
-  max_lr: 2e-5 #upper bound for learning rate 
-  cycle_length: -1 #-1 for the number of steps/iterations in 1 epoch or a specific number otherwise (LR set to min_lr afterwards)
-```
-The following for Cosine Annealing with proportional warmup:
-
-```yaml
-learning_schedule:
-  type: "cosine_w_warmup"
-  start_lr: 1e-8 #learning rate used at start of the warm-up, which ends at the top-level learning rate
-  warmup_proportion: .1 #proportion of steps/iterations in 1 epoch to spend warming up
-  min_lr: 1e-7
-  cycle_length: -1
-```
-
-Otherwise a constant learning rate (specified via **learning_rate** top-level configuration variable) is used throughout
-
 ## Generation
 
 mlx-tuning-fork also includes a command for generating from mlx models: **mlx_tuning_fork_generate**
 
 ```commandline
 % mlx_tuning_fork_generate --help
-Usage: python -m mlx_tuning_fork.generate [OPTIONS] MODEL_NAME
+Usage: mlx_tuning_fork_generate [OPTIONS] MODEL_NAME
 
 Options:
   --loom-file TEXT                An OgbujiPT word loom file to use for prompt
@@ -130,7 +96,6 @@ Options:
   --trust-remote-code / --no-trust-remote-code
   --eos-token TEXT                End of sequence token for tokenizer
   --seed INTEGER                  PRNG seed
-  --colorize / --no-colorize      Colorize output based on token probability
   --cot-source TEXT               The name of the file with an apply chat
                                   template structure to use as the basis for a
                                   few-shot prompt construction
@@ -179,6 +144,16 @@ for the instead.
 If any of the text values in the corresponding tables have curly braces, the ``--loom-markers`` option can be used
 to provide values for the names specified in between the braces.  It is expected to be a string in the format: 
 ``name=[.. value ..]``.
+
+In addition, there is `-f/--prompt-format` option for specifying the prompt format, to determine how they are 
+constructed from components whose valus are one of:
+
+- mistra
+- chatml
+- llama3
+- alpaca
+- phi
+- gemma
 
 So, the following command-line:
 
