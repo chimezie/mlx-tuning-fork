@@ -109,7 +109,7 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
         scaled_steps_per_eval = int(epoch_num_steps / args.evals_per_epoch)
         scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
                                  ) if args.eval_proportion_of_total else (
-            int(len(valid_set) / (min(1, args.evals_per_epoch - 1) * args.batch_size))
+            int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size) if args.evals_per_epoch > 1 else 1)
         )
     else:
         scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
