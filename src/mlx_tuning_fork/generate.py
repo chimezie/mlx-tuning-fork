@@ -5,7 +5,7 @@ from ogbujipt import word_loom
 from ogbujipt.prompting import format
 import mlx.core as mx
 from mlx_lm.utils import load, generate
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import make_sampler, make_logits_processors
 
 DEFAULT_SEED = 0
 
@@ -90,7 +90,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
 
 @click.command()
 @click.option("--loom-file", help="An OgbujiPT word loom file to use for prompt construction")
-@click.option("--loom-markers", help="Loom marker values", default=None, type=str, multiple=True)
+@click.option("-m", "--loom-markers", help="Loom marker values", default=None, type=str, multiple=True)
 @click.option('-p', '--prompt', default=None, type=str,
               help='Commandline prompt (overrides) prompt in YAML configuration')
 @click.option('-t', '--temperature', default=1, type=float,
@@ -139,13 +139,13 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
         prompt = generate_prompt_from_loom(loom_file, loom_markers, get_prompt_formatter(prompt_format), build_prompt,
                                            cot_source, tokenizer)
     sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, min_tokens_to_keep=min_p_tokens)
-
     generate(
         model,
         tokenizer,
         prompt,
-        repetition_context_size=repetition_context_size,
-        repetition_penalty=repetition_penalty,
+        logits_processors=make_logits_processors(repetition_context_size=repetition_context_size,
+                                                 repetition_penalty=repetition_penalty) if repetition_penalty != 0
+        else None,
         max_tokens=num_tokens,
         verbose=True,
         sampler=sampler
