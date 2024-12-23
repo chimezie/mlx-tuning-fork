@@ -10,14 +10,12 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_lm.tokenizer_utils import no_bos_or_eos
-from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
+from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES, input_masked_loss, iterate_completion_batches, no_bos_or_eos
 from mlx_lm.utils import load
 from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
 from mlx_lm.tuner.datasets import load_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
-from mlx_lm.tuner.trainer import (TrainingArgs, train, default_loss, iterate_batches, input_masked_loss,
-                                  iterate_completion_batches)
+from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
 from mlx_lm.lora import CONFIG_DEFAULTS
 
 # 2: Define the search space

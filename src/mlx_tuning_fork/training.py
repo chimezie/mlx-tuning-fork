@@ -1,21 +1,138 @@
 import mlx.optimizers as optim
-from mlx_lm.tuner.trainer import (TrainingArgs, default_loss, evaluate, train, iterate_batches,
-                                  iterate_completion_batches, input_masked_loss)
+from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.utils import load, save_config
-from mlx_lm.tokenizer_utils import no_bos_or_eos
 from mlx_lm.lora import print_trainable_parameters
-from mlx_lm.tuner.datasets import load_dataset
+from mlx_lm.tuner.datasets import load_dataset, CompletionsDataset, ChatDataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.reporting import WandbCallback
+from mlx_tuning_fork.tuning import ExtendableCompletionsDataset, ExtendableChatDataset, CompletionsDatasetCollection
 from pathlib import Path
 from pprint import pprint
 from types import SimpleNamespace
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer
+from typing import List, Optional, Tuple
+import mlx.core as mx
+import mlx.nn as nn
+import numpy as np
 import click
 import yaml
 import math
 import warnings
+
+def no_bos_or_eos(sequence: List, bos: int, eos: int) -> List:
+    removed_bos = sequence if sequence[0] != bos else sequence[1:]
+    return removed_bos[:-1] if removed_bos[-1] == eos else removed_bos
+
+def contains(small_list: List, big_list: List) -> Tuple[int, int]:
+    """
+    Returns the beginning and end index of the first occurrence of small_list in big_list.
+    """
+    small_list_length = len(small_list)
+    for ind in (i for i, e in enumerate(big_list) if e == small_list[0]):
+        if big_list[ind : ind + small_list_length] == small_list:
+            return ind, ind + small_list_length - 1
+
+def input_masked_loss(model, inputs, response_prefix_lengths, lengths):
+    shifted_inputs = inputs[:, :-1]
+    shifted_labels = inputs[:, 1:]
+    logits = model(shifted_inputs)
+    logits = logits.astype(mx.float32)
+
+    mask_width = shifted_inputs.shape[1]
+    token_indices = mx.arange(mask_width)[None, :]
+    mask = mx.logical_and(
+        token_indices >= response_prefix_lengths[:, None],
+        token_indices < lengths[:, None],
+    )
+
+    ce = nn.losses.cross_entropy(logits, shifted_labels) * mask
+    ntoks = mask.sum()
+    ce = ce.sum() / ntoks
+    return ce, ntoks
+
+def iterate_completion_batches(
+    dataset: ExtendableCompletionsDataset,
+    tokenizer: PreTrainedTokenizer,
+    batch_size: int,
+    max_seq_length: int,
+    train: bool = False,
+    response_generation_tokens: Optional[List[int]] = None,
+):
+    """
+    A version of iterate_batches that works with completion datasets, tracks the boundaries between input/output tokens
+    and returns the lengths of input tokens as well as that of the full sequences.
+    """
+    idx = sorted(range(len(dataset)), key=lambda i: len(dataset[i]))
+    if len(dataset) < batch_size:
+        raise ValueError(
+            f"Dataset must have at least batch_size={batch_size}"
+            f" examples but only has {len(dataset)}."
+        )
+
+    # If running in distributed mode (N machines) then each one should skip N-1
+    # samples
+    step = mx.distributed.init().size()
+    if batch_size % step != 0:
+        raise ValueError("The batch size must be divisible by the number of workers")
+    # Make the batches:
+    batch_idx = [
+        idx[i : i + batch_size : step]
+        for i in range(0, len(idx) - batch_size + 1, batch_size)
+    ]
+    while True:
+        indices = np.random.permutation(len(batch_idx))
+        for i in indices:
+            response_prefix_lengths = []
+            batch = []
+            for j in batch_idx[i]:
+                full_sequence = dataset.get_item(j, tokenize=True)
+                if full_sequence[-1] != tokenizer.eos_token_id:
+                    full_sequence.append(tokenizer.eos_token_id)
+                batch.append(full_sequence)
+                if len(response_generation_tokens) > 1:
+                    response_marker_begin, response_marker_end = contains(
+                        response_generation_tokens, full_sequence
+                    )
+                    response_prefix_lengths.append(response_marker_end + 1)
+                else:
+                    response_marker_begin = full_sequence.index(
+                        response_generation_tokens[0]
+                    )
+                    response_prefix_lengths.append(response_marker_begin + 1)
+
+            lengths = [len(x) for x in batch]
+
+            if max(lengths) > max_seq_length:
+                print(
+                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
+                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
+                    "Consider pre-splitting your data to save memory."
+                )
+
+            # Pad to the nearest multiple of 8 or the maximum length
+            pad_to = 8
+            max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
+            max_length_in_batch = min(max_length_in_batch, max_seq_length)
+
+            batch_arr = np.zeros((batch_size // step, max_length_in_batch), np.int32)
+            for j in range(batch_size // step):
+                response_prefix_length = response_prefix_lengths[j]
+                truncated_length = min(lengths[j], max_seq_length)
+                batch_arr[j, response_prefix_length:truncated_length] = batch[j][
+                    response_prefix_length:truncated_length
+                ]
+                lengths[j] = (
+                    truncated_length  # Update lengths to match truncated lengths
+                )
+
+            yield mx.array(batch_arr), mx.array(response_prefix_lengths), mx.array(
+                lengths
+            )
+
+        if not train:
+            break
 
 ALL_TRAIN_TYPES = ['lora', 'dora']
 DORA_TRAIN_TYPES = ['dora']
@@ -25,7 +142,7 @@ DORA_TRAIN_TYPES = ['dora']
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
 @click.option('--train-type',
               type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
-              default="lora-completion-only")
+              default="lora")
 @click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.option('--wandb-project', default=None, type=str,
               help='Wandb project name')

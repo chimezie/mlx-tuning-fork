@@ -107,8 +107,9 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
               help='The number of tokens to consider for repetition penalty')
 @click.option('-tp', '--top-p', default=CONFIG_DEFAULTS["top_p"], type=float,
               help='Sampling top-p')
+@click.option('--top_k', default=-1, type=int, help='Sampling top_k')
 @click.option('--min-p', default=-1, type=float, help='Sampling min-p')
-@click.option('--min-p-tokens', default=1, type=int, help='Sampling min-p')
+@click.option('--min-p-tokens', default=1, type=int, help='Sampling min-p tokens')
 @click.option('--build-prompt', default=None, type=str,
               help='Which word loom sections to use in building the claim (space-separated list of sections)')
 @click.option('--trust-remote-code/--no-trust-remote-code', default=False)
@@ -120,7 +121,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
                    "prompt construction")
 @click.argument('model_name')
 def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format, adapter_path, repetition_penalty,
-         repetition_context_size, top_p, min_p, min_p_tokens, build_prompt, trust_remote_code, eos_token, seed,
+         repetition_context_size, top_p, top_k, min_p, min_p_tokens, build_prompt, trust_remote_code, eos_token, seed,
          cot_source, model_name):
     tokenizer_config = {}
     if eos_token is not None:
@@ -138,7 +139,7 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
     if loom_file:
         prompt = generate_prompt_from_loom(loom_file, loom_markers, get_prompt_formatter(prompt_format), build_prompt,
                                            cot_source, tokenizer)
-    sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, min_tokens_to_keep=min_p_tokens)
+    sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, min_tokens_to_keep=min_p_tokens, top_k=top_k)
     generate(
         model,
         tokenizer,

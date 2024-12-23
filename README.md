@@ -17,7 +17,6 @@ $ pip install mlx-tuning-fork
 You can get documentation of the command-line options for the fine-tuning command (**mlx_tuning_fork_training**) via:
 
 ```commandline
-% mlx_tuning_fork_training --help
 Usage: mlx_tuning_fork_training [OPTIONS] CONFIG_FILE
 
 Options:
@@ -27,7 +26,6 @@ Options:
   --mask-inputs / --no-mask-inputs
   --wandb-project TEXT            Wandb project name
   --wandb-run TEXT                Wandb run name
-  --help                          Show this message and exit.
 ```
 
 ## Configuration
@@ -63,6 +61,24 @@ In particular, the following additional configurations can be used to automatica
 * **adapter_save_interval_proportion** (Same proportions for intervals between saving the LoRa adapter - defaults to .1)
     * Used to determine `save_ever` if `saves_per_epoch` is not provided
 
+## Masking inputs
+A very popular feature of axolotl is the ability to ensure the model being trained 
+["can focus on predicting the outputs only."](https://axolotl-ai-cloud.github.io/axolotl/docs/input_output.html#masking-inputs)
+This is not supported in mlx, but mlx-tuning-fork can mask inputs either during LoRA or DoRA training via the --mask-inputs option.
+
+This functionality expects a ```response_template``` parameter in the configuration that is either a 
+[string that indicate the start of the model's response](https://huggingface.co/docs/transformers/en/chat_templating#what-are-generation-prompts) 
+or its corresponding tokens.  It is used to create the mask that excludes the tokens associated from the rest of
+the sequence during loss calculations.  For example:
+
+```yaml
+response_template: "<start_of_turn>model"
+```
+or (for the corresponding tokens of Gemma's response template)
+```yaml
+response_template: [106, 2516]
+```
+
 ## Generation
 
 mlx-tuning-fork also includes a command for generating from mlx models: **mlx_tuning_fork_generate**
@@ -74,7 +90,7 @@ Usage: mlx_tuning_fork_generate [OPTIONS] MODEL_NAME
 Options:
   --loom-file TEXT                An OgbujiPT word loom file to use for prompt
                                   construction
-  --loom-markers TEXT             Loom marker values
+  -m, --loom-markers TEXT         Loom marker values
   -p, --prompt TEXT               Commandline prompt (overrides) prompt in
                                   YAML configuration
   -t, --temperature FLOAT         Prompt generation temperature
@@ -89,8 +105,9 @@ Options:
                                   The number of tokens to consider for
                                   repetition penalty
   -tp, --top-p FLOAT              Sampling top-p
+  --top_k INTEGER                 Sampling top_k
   --min-p FLOAT                   Sampling min-p
-  --min-p-tokens INTEGER          Sampling min-p
+  --min-p-tokens INTEGER          Sampling min-p tokens
   --build-prompt TEXT             Which word loom sections to use in building
                                   the claim (space-separated list of sections)
   --trust-remote-code / --no-trust-remote-code
@@ -201,12 +218,6 @@ The dataset files are expected to be in this format:
  "output": "[..]"}
 ```
 
-## Learning (completion-only v.s. self-supervised)
-By default, mlx_tuning_fork will train on completions only, using the **input** field for the input prompt and **output** for 
-the expected output.  However, you can use mlx_lm's default self-supervised
-learning using the `--train-type` with a value of _self-supervised_.  In this case, only the value of the output field
-in the training data is used. 
-
 ## Running Weights and Biases (Wandb) Hyperparameter Sweeps ##
 
 mlx_tuning_fork also allows you to run Wandb hyperparameter sweeps/searches using the mlx_tuning_form.wandb_sweep module.
@@ -219,8 +230,8 @@ Usage: python -m mlx_tuning_fork.wandb_sweep [OPTIONS] CONFIG_FILE
 Options:
   --verbose / --no-verbose
   --wandb-project TEXT            Wandb project name
-  --train-type [completion-only|self-supervised]
-  -f, --prompt-format [mistral|chatml]
+  --train-type [lora|dora]
+  --mask-inputs / --no-mask-inputs
   --help                          Show this message and exit.
 ```
 
