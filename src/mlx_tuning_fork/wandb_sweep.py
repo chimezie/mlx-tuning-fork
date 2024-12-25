@@ -146,7 +146,7 @@ class Sweeper:
                 response_generation_tokens = tokenizer.encode(
                     args.response_template, add_special_tokens=False
                 )
-            elif args.response_template == None:
+            elif args.response_template is None:
                 raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
             else:
                 if not all([item.isinstance(int) for item in args.response_template]):
