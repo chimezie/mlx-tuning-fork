@@ -3,10 +3,10 @@ from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, it
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.utils import load, save_config
 from mlx_lm.lora import print_trainable_parameters
-from mlx_lm.tuner.datasets import load_dataset, CompletionsDataset, ChatDataset
+from mlx_lm.tuner.datasets import load_dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.tuning import ExtendableCompletionsDataset, ExtendableChatDataset, CompletionsDatasetCollection
+from mlx_tuning_fork.tuning import ExtendableCompletionsDataset
 from pathlib import Path
 from pprint import pprint
 from types import SimpleNamespace
@@ -251,7 +251,7 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
             response_generation_tokens = tokenizer.encode(
                 args.response_template, add_special_tokens=False
             )
-        elif args.response_template == None:
+        elif args.response_template is None:
             raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
         else:
             if not all([item.isinstance(int) for item in args.response_template]):
