@@ -1,4 +1,4 @@
-from mlx_lm.tuner.datasets import load_dataset, CompletionsDataset, ChatDataset
+from mlx_lm.tuner.datasets import CompletionsDataset, ChatDataset
 from transformers import PreTrainedTokenizer
 from typing import List, Dict, Callable, Union
 
