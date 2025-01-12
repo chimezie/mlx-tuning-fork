@@ -1,29 +1,40 @@
-import warnings
-
 import mlx.optimizers as optim
-import numpy as np
 from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
-from mlx_lm.tuner.utils import linear_to_lora_layers
-from mlx_lm.utils import load, generate, save_config
+from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
+from mlx_lm.utils import load, save_config
 from mlx_lm.lora import print_trainable_parameters
-from mlx_tuning_fork.tuning.utils import create_delineated_batches
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
+from mlx_lm.tuner.datasets import load_dataset
+from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
+from mlx_tuning_fork.reporting import WandbCallback
+from mlx_tuning_fork.tuning import ExtendableCompletionsDataset
+from pathlib import Path
+from pprint import pprint
 from types import SimpleNamespace
-import mlx.core as mx
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer
+from typing import List, Optional, Tuple
+import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 import click
 import yaml
 import math
-from mlx_tuning_fork.dataset import Dataset
-from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader, get_prompt_formatter, PROMPT_FORMATS
-from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
-from pathlib import Path
-from pprint import pprint
+import warnings
 
+def no_bos_or_eos(sequence: List, bos: int, eos: int) -> List:
+    removed_bos = sequence if sequence[0] != bos else sequence[1:]
+    return removed_bos[:-1] if removed_bos[-1] == eos else removed_bos
 
-def completions_only_loss(model, inputs, input_lengths, lengths):
+def contains(small_list: List, big_list: List) -> Tuple[int, int]:
+    """
+    Returns the beginning and end index of the first occurrence of small_list in big_list.
+    """
+    small_list_length = len(small_list)
+    for ind in (i for i, e in enumerate(big_list) if e == small_list[0]):
+        if big_list[ind : ind + small_list_length] == small_list:
+            return ind, ind + small_list_length - 1
+
+def input_masked_loss(model, inputs, response_prefix_lengths, lengths):
     shifted_inputs = inputs[:, :-1]
     shifted_labels = inputs[:, 1:]
     logits = model(shifted_inputs)
@@ -31,15 +42,28 @@ def completions_only_loss(model, inputs, input_lengths, lengths):
 
     mask_width = shifted_inputs.shape[1]
     token_indices = mx.arange(mask_width)[None, :]
-    mask = mx.logical_and(token_indices >= input_lengths[:, None], token_indices < lengths[:, None])
+    mask = mx.logical_and(
+        token_indices >= response_prefix_lengths[:, None],
+        token_indices < lengths[:, None],
+    )
 
     ce = nn.losses.cross_entropy(logits, shifted_labels) * mask
     ntoks = mask.sum()
     ce = ce.sum() / ntoks
     return ce, ntoks
 
-
-def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
+def iterate_completion_batches(
+    dataset: ExtendableCompletionsDataset,
+    tokenizer: PreTrainedTokenizer,
+    batch_size: int,
+    max_seq_length: int,
+    train: bool = False,
+    response_generation_tokens: Optional[List[int]] = None,
+):
+    """
+    A version of iterate_batches that works with completion datasets, tracks the boundaries between input/output tokens
+    and returns the lengths of input tokens as well as that of the full sequences.
+    """
     idx = sorted(range(len(dataset)), key=lambda i: len(dataset[i]))
     if len(dataset) < batch_size:
         raise ValueError(
@@ -47,47 +71,85 @@ def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_len
             f" examples but only has {len(dataset)}."
         )
 
+    # If running in distributed mode (N machines) then each one should skip N-1
+    # samples
+    step = mx.distributed.init().size()
+    if batch_size % step != 0:
+        raise ValueError("The batch size must be divisible by the number of workers")
     # Make the batches:
     batch_idx = [
-        idx[i: i + batch_size] for i in range(0, len(idx) - batch_size + 1, batch_size)
+        idx[i : i + batch_size : step]
+        for i in range(0, len(idx) - batch_size + 1, batch_size)
     ]
     while True:
         indices = np.random.permutation(len(batch_idx))
         for i in indices:
-            input_text = []
-            output_text = []
-
+            response_prefix_lengths = []
+            batch = []
             for j in batch_idx[i]:
-                record = dataset[j]
-                input_text.append(prompt_formatter.get_input(record))
-                output_text.append(prompt_formatter.get_output(record))
-            yield create_delineated_batches(input_text, output_text, tokenizer, max_seq_length=max_seq_length)
+                full_sequence = dataset.get_item(j, tokenize=True)
+                if full_sequence[-1] != tokenizer.eos_token_id:
+                    full_sequence.append(tokenizer.eos_token_id)
+                batch.append(full_sequence)
+                if len(response_generation_tokens) > 1:
+                    response_marker_begin, response_marker_end = contains(
+                        response_generation_tokens, full_sequence
+                    )
+                    response_prefix_lengths.append(response_marker_end + 1)
+                else:
+                    response_marker_begin = full_sequence.index(
+                        response_generation_tokens[0]
+                    )
+                    response_prefix_lengths.append(response_marker_begin + 1)
+
+            lengths = [len(x) for x in batch]
+
+            if max(lengths) > max_seq_length:
+                print(
+                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
+                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
+                    "Consider pre-splitting your data to save memory."
+                )
+
+            # Pad to the nearest multiple of 8 or the maximum length
+            pad_to = 8
+            max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
+            max_length_in_batch = min(max_length_in_batch, max_seq_length)
+
+            batch_arr = np.zeros((batch_size // step, max_length_in_batch), np.int32)
+            for j in range(batch_size // step):
+                response_prefix_length = response_prefix_lengths[j]
+                truncated_length = min(lengths[j], max_seq_length)
+                batch_arr[j, response_prefix_length:truncated_length] = batch[j][
+                    response_prefix_length:truncated_length
+                ]
+                lengths[j] = (
+                    truncated_length  # Update lengths to match truncated lengths
+                )
+
+            yield mx.array(batch_arr), mx.array(response_prefix_lengths), mx.array(
+                lengths
+            )
 
         if not train:
             break
 
-ALL_TRAIN_TYPES = ['lora-completion-only', 'dora-completion-only', 'lora-self-supervised',
-                   'dora-self-supervised']
-DORA_TRAIN_TYPES = ['dora-completion-only', 'dora-self-supervised']
-COMPLETION_ONLY_TYPES = ['lora-completion-only', 'dora-completion-only']
-PEFT_TYPES = ['lora-self-supervised', 'dora-self-supervised'] + COMPLETION_ONLY_TYPES
+ALL_TRAIN_TYPES = ['lora', 'dora']
+DORA_TRAIN_TYPES = ['dora']
 
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
 @click.option('--train-type',
               type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
-              default="lora-completion-only")
-@click.option('-f', '--prompt-format',
-              type=click.Choice(PROMPT_FORMATS, case_sensitive=False))
+              default="lora")
+@click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.option('--wandb-project', default=None, type=str,
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
 @click.argument('config_file')
-def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, config_file):
-    global prompt_formatter
-    prompt_formatter = get_prompt_formatter(prompt_format)
+def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, config_file):
     tokenizer_config = {}
     with open(config_file, "r") as file:
         config = yaml.load(file, yaml_loader)
@@ -105,8 +167,6 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         if verbose:
             pprint(param_dict)
         args = SimpleNamespace(**param_dict)
-
-    completion_only_training = train_type in COMPLETION_ONLY_TYPES
 
     print("Loading pretrained model")
     model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
@@ -131,11 +191,7 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         wandb.init(project=wandb_project, name=wandb_run, config=config)
 
     print("Loading datasets")
-    names = ("train", "valid", "test")
-    if train_type in ('lora-completion-only', 'dora-completion-only', 'debug'):
-        train_set, valid_set, test_set = (Dataset(Path(args.data) / f"{n}.jsonl") for n in names)
-    else:
-        train_set, valid_set, test_set = (mlx_lm_dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+    train_set, valid_set, test_set = load_dataset(args, tokenizer)
 
     if args.train and len(train_set) == 0:
         raise ValueError(
@@ -170,7 +226,7 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         scaled_steps_per_eval = int(epoch_num_steps / args.evals_per_epoch)
         scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
                                  ) if args.eval_proportion_of_total else (
-            int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size))
+            int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size) if args.evals_per_epoch > 1 else 1)
         )
     else:
         scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
@@ -188,16 +244,26 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
         f"and saving the adapter every {scaled_save_every:,} steps."
     )
-
-    iterate_batches_fn = completions_only_iterate_batches if completion_only_training else iterate_batches
-    if not summary:
-
-        if "learning_schedule" in config:
-            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
-                config["learning_schedule"]["type"]].from_configuration(args.learning_rate, config, num_iterations)
+    response_generation_tokens = []
+    if mask_inputs:
+        print("Masking inputs")
+        if isinstance(args.response_template, str):
+            response_generation_tokens = tokenizer.encode(
+                args.response_template, add_special_tokens=False
+            )
+        elif args.response_template is None:
+            raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
         else:
-            scheduler = args.learning_rate
-
+            if not all([item.isinstance(int) for item in args.response_template]):
+                raise ValueError(
+                    "Response template must be a list of integers if it is not a string."
+                )
+            response_generation_tokens = args.response_template
+        response_generation_tokens = no_bos_or_eos(response_generation_tokens,
+                                                   tokenizer.bos_token_id,
+                                                   tokenizer.eos_token_id
+                                                   ) if len(response_generation_tokens) > 1 else response_generation_tokens
+    if not summary:
         # Resume training the given adapters.
         if args.resume_adapter_file is not None:
             print(f"Loading pretrained adapters from {args.resume_adapter_file}")
@@ -208,31 +274,34 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         save_config(vars(args), adapter_path / "adapter_config.json")
         adapter_file = adapter_path / "adapters.safetensors"
 
-        training_args = TrainingArgs(
-            batch_size=args.batch_size,
-            iters=num_iterations,
-            val_batches=scaled_val_batches,
-            steps_per_report=scaled_steps_per_report,
-            steps_per_eval=scaled_steps_per_eval,
-            steps_per_save=scaled_save_every,
-            adapter_file=adapter_file,
-            max_seq_length=args.max_seq_length,
-            grad_checkpoint=args.grad_checkpoint,
-        )
-
         if args.train:
             print("Training")
             model.train()
-            opt = optim.Adam(learning_rate=scheduler)
+            opt = optim.Adam(
+                learning_rate=(
+                    build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
+                )
+            )
+
             train(
-                model,
-                tokenizer,
-                opt,
-                train_set,
-                valid_set,
-                args=training_args,
-                loss=completions_only_loss if completion_only_training else default_loss,
-                iterate_batches=iterate_batches_fn,
+                model=model,
+                tokenizer=tokenizer,
+                optimizer=opt,
+                train_dataset=train_set,
+                val_dataset=valid_set,
+                args=TrainingArgs(batch_size=args.batch_size,
+                                  iters=num_iterations,
+                                  val_batches=scaled_val_batches,
+                                  steps_per_report=scaled_steps_per_report,
+                                  steps_per_eval=scaled_steps_per_eval,
+                                  steps_per_save=scaled_save_every,
+                                  max_seq_length=args.max_seq_length,
+                                  response_generation_tokens=response_generation_tokens,
+                                  adapter_file=adapter_file),
+                iterate_batches=(
+                    iterate_completion_batches if mask_inputs else iterate_batches
+                ),
+                loss=input_masked_loss if mask_inputs else default_loss,
                 training_callback=training_callback
             )
 
@@ -255,8 +324,10 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
                 tokenizer=tokenizer,
                 batch_size=args.batch_size,
                 num_batches=args.test_batches,
-                loss=completions_only_loss,
-                iterate_batches=completions_only_iterate_batches
+                loss=input_masked_loss if mask_inputs else default_loss,
+                iterate_batches=(
+                    iterate_completion_batches if mask_inputs else iterate_batches
+                ),
             )
 
             test_ppl = math.exp(test_loss)
@@ -267,16 +338,18 @@ def main(verbose, summary, train_type, prompt_format, wandb_project, wandb_run, 
         total_num_tokens = 0
         max_tokens = 0
         _lengths = []
-        for it, (batch, input_lengths, lengths) in zip(
+        for it, info in zip(
                 range(1, num_iterations + 1),
-                iterate_batches_fn(
+                (iterate_completion_batches if mask_inputs else iterate_batches)(
                     dataset=train_set,
                     tokenizer=tokenizer,
                     batch_size=args.batch_size,
                     max_seq_length=args.max_seq_length,
                     train=False,
+                    response_generation_tokens=response_generation_tokens
                 )
         ):
+            lengths = info[-1]
             max_tokens = max(max_tokens, max(lengths))
             _lengths.extend(lengths)
             total_num_tokens += sum(lengths)

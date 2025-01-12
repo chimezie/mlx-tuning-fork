@@ -5,6 +5,7 @@ from ogbujipt import word_loom
 from ogbujipt.prompting import format
 import mlx.core as mx
 from mlx_lm.utils import load, generate
+from mlx_lm.sample_utils import make_sampler, make_logits_processors
 
 DEFAULT_SEED = 0
 
@@ -89,7 +90,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
 
 @click.command()
 @click.option("--loom-file", help="An OgbujiPT word loom file to use for prompt construction")
-@click.option("--loom-markers", help="Loom marker values", default=None, type=str, multiple=True)
+@click.option("-m", "--loom-markers", help="Loom marker values", default=None, type=str, multiple=True)
 @click.option('-p', '--prompt', default=None, type=str,
               help='Commandline prompt (overrides) prompt in YAML configuration')
 @click.option('-t', '--temperature', default=1, type=float,
@@ -106,29 +107,25 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
               help='The number of tokens to consider for repetition penalty')
 @click.option('-tp', '--top-p', default=CONFIG_DEFAULTS["top_p"], type=float,
               help='Sampling top-p')
+@click.option('--top_k', default=-1, type=int, help='Sampling top_k')
 @click.option('--min-p', default=-1, type=float, help='Sampling min-p')
-@click.option('--min-p-tokens', default=1, type=int, help='Sampling min-p')
+@click.option('--min-p-tokens', default=1, type=int, help='Sampling min-p tokens')
 @click.option('--build-prompt', default=None, type=str,
               help='Which word loom sections to use in building the claim (space-separated list of sections)')
 @click.option('--trust-remote-code/--no-trust-remote-code', default=False)
 @click.option('--eos-token', default=None, type=str,
-              help='End of sequence token for tokenizer')
+              help='End of sequence token for tokenizer', multiple=True)
 @click.option('--seed', default=DEFAULT_SEED, type=int, help='PRNG seed')
-@click.option("--colorize/--no-colorize", default=False, help="Colorize output based on token probability")
 @click.option("--cot-source", default=None,
               help="The name of the file with an apply chat template structure to use as the basis for a few-shot "
                    "prompt construction")
 @click.argument('model_name')
 def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format, adapter_path, repetition_penalty,
-         repetition_context_size, top_p, min_p, min_p_tokens, build_prompt, trust_remote_code, eos_token, seed,
-         colorize, cot_source, model_name):
+         repetition_context_size, top_p, top_k, min_p, min_p_tokens, build_prompt, trust_remote_code, eos_token, seed,
+         cot_source, model_name):
     tokenizer_config = {}
-    if eos_token is not None:
-        tokenizer_config["eos_token"] = eos_token
     if trust_remote_code:
         tokenizer_config["trust_remote_code"] = True
-
-    formatter = colorprint_by_t0 if colorize else None
 
     mx.random.seed(seed)
 
@@ -137,30 +134,24 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
         adapter_path=adapter_path,
         tokenizer_config=tokenizer_config,
     )
+    if eos_token is None:
+        for eos_token in eos_token:
+            tokenizer.add_eos_token(eos_token)
     if loom_file:
         prompt = generate_prompt_from_loom(loom_file, loom_markers, get_prompt_formatter(prompt_format), build_prompt,
                                            cot_source, tokenizer)
+    sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, min_tokens_to_keep=min_p_tokens, top_k=top_k)
     generate(
         model,
         tokenizer,
         prompt,
-        num_tokens,
+        logits_processors=make_logits_processors(repetition_context_size=repetition_context_size,
+                                                 repetition_penalty=repetition_penalty) if repetition_penalty != 0
+        else None,
+        max_tokens=num_tokens,
         verbose=True,
-        formatter=formatter,
-        temp=temperature,
-        repetition_penalty=repetition_penalty,
-        repetition_context_size=repetition_context_size,
-        top_p=top_p,
-        min_p=min_p,
-        min_tokens_to_keep=min_p_tokens
+        sampler=sampler
     )
-    if colorize:
-        print(f"\033[1m\033[39m prop. > .8 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[36m .6 < prob <= .8 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[32m .4 < prob <= .6 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[33m .2 < prob <= .4 \033[0m", end="", flush=True)
-        print(f"\033[1m\033[31m < .3 \033[0m", end="", flush=True)
-        print("\n")
 
 if __name__ == '__main__':
     main()
