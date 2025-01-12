@@ -114,7 +114,7 @@ def generate_prompt_from_loom(loom_file, loom_markers, prompt_formatter, build_p
               help='Which word loom sections to use in building the claim (space-separated list of sections)')
 @click.option('--trust-remote-code/--no-trust-remote-code', default=False)
 @click.option('--eos-token', default=None, type=str,
-              help='End of sequence token for tokenizer')
+              help='End of sequence token for tokenizer', multiple=True)
 @click.option('--seed', default=DEFAULT_SEED, type=int, help='PRNG seed')
 @click.option("--cot-source", default=None,
               help="The name of the file with an apply chat template structure to use as the basis for a few-shot "
@@ -124,8 +124,6 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
          repetition_context_size, top_p, top_k, min_p, min_p_tokens, build_prompt, trust_remote_code, eos_token, seed,
          cot_source, model_name):
     tokenizer_config = {}
-    if eos_token is not None:
-        tokenizer_config["eos_token"] = eos_token
     if trust_remote_code:
         tokenizer_config["trust_remote_code"] = True
 
@@ -136,6 +134,9 @@ def main(loom_file, loom_markers, prompt, temperature, num_tokens, prompt_format
         adapter_path=adapter_path,
         tokenizer_config=tokenizer_config,
     )
+    if eos_token is None:
+        for eos_token in eos_token:
+            tokenizer.add_eos_token(eos_token)
     if loom_file:
         prompt = generate_prompt_from_loom(loom_file, loom_markers, get_prompt_formatter(prompt_format), build_prompt,
                                            cot_source, tokenizer)
