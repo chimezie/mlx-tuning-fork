@@ -6,109 +6,27 @@ except ImportError:
 import click
 from tqdm import tqdm
 import yaml
-from pathlib import Path
 import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.training import completions_only_loss
-from mlx_tuning_fork.tuning.dynamic_learning import SCHEDULE_CONFIGURATION_TYPE_TO_CLASS
-from mlx_lm.utils import load, save_config
-import mlx.core as mx
-from mlx_tuning_fork.dataset import Dataset
-from mlx_lm.tuner.datasets import Dataset as mlx_lm_dataset
-from mlx_lm.tuner.utils import linear_to_lora_layers
+from mlx_tuning_fork.tuning.input_masking import input_masked_loss, InputMasker
+from mlx_tuning_fork.tuning.utils import no_bos_or_eos
+from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
+from mlx_lm.utils import load
+from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
+from mlx_lm.tuner.datasets import load_dataset
+from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
 from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
-from mlx_tuning_fork.config import get_prompt_formatter
 from mlx_lm.lora import CONFIG_DEFAULTS
 
-yaml_loader = yaml.SafeLoader
-yaml_loader.add_implicit_resolver(
-    "tag:yaml.org,2002:float",
-    re.compile(
-        """^(?:
-     [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
-    |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
-    |\\.[0-9_]+(?:[eE][-+][0-9]+)?
-    |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
-    |[-+]?\\.(?:inf|Inf|INF)
-    |\\.(?:nan|NaN|NAN))$""",
-        re.X,
-    ),
-    list("-+0123456789."),
-)
-
-# 2: Define the search space
-sweep_configuration = {
-    "method": "random",
-    "metric": {"goal": "minimize", "name": "score"},
-    "parameters": {
-        "x": {"max": 0.1, "min": 0.01},
-        "y": {"values": [1, 3, 7]},
-    },
-}
-
-def completions_only_iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False):
-    #idx = sorted(range(len(dataset)), key=lambda idx: len(dataset[idx]))
-    #See https://github.com/ml-explore/mlx-examples/issues/583
-    idx = range(len(dataset))
-
-    # Make the batches:
-    batch_idx = [
-        idx[i: i + batch_size] for i in range(0, len(idx) - batch_size + 1, batch_size)
-    ]
-    while True:
-        indices = np.random.permutation(len(batch_idx))
-        for i in indices:
-            input_text = []
-            output_text = []
-            for j in batch_idx[i]:
-                record = dataset[j]
-                input_text.append(prompt_formatter.get_input(record))
-                output_text.append(prompt_formatter.get_output(record))
-
-            input_batch = [tokenizer.encode(record) for record in input_text]
-            output_batch = [tokenizer.encode(record, add_special_tokens=False) +
-                            [tokenizer.eos_token_id] for record in output_text]
-
-            input_lengths = [len(x) for x in input_batch]
-            output_lengths = [len(x) for x in output_batch]
-
-            full_labels = [input_batch[idx] + output_batch[idx] for idx in range(batch_size)]
-            lengths = [len(x) for x in full_labels]
-
-            if max(lengths) > max_seq_length:
-                print(
-                    f"[WARNING] Some sequences are longer than {max_seq_length} tokens. "
-                    f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
-                    "Consider pre-splitting your data to save memory."
-                )
-            pad_to = 8
-            max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
-            max_length_in_batch = min(max_length_in_batch, max_seq_length)
-
-            batch_arr = np.zeros((batch_size, max_length_in_batch), np.int32)
-            adjusted_lengths = []
-            for j in range(batch_size):
-                input_length = input_lengths[j]
-                full_ids_end_idx = input_length + min(output_lengths[j], max_length_in_batch - input_length)
-                adjusted_lengths.append(full_ids_end_idx)
-                batch_arr[j, :full_ids_end_idx] = full_labels[j][:full_ids_end_idx]
-            batch = mx.array(batch_arr)
-            yield batch, mx.array(input_lengths), mx.array(adjusted_lengths)
-
-        if not train:
-            break
-
-
 class Sweeper:
-    def __init__(self, project_name, config, train_type):
+    def __init__(self, verbose, project_name, config, train_type, mask_inputs):
+        self.verbose = verbose
         self.project_name = project_name
         self.config = config
         self.train_type = train_type
-        self.loss_fn = completions_only_loss if train_type == 'completion-only' else default_loss
-        self.iterate_batches_fn = (completions_only_iterate_batches if train_type == 'completion-only'
-                                   else iterate_batches)
+        self.mask_inputs = mask_inputs
 
     def sweep(self):
         if wandb is None:
@@ -119,22 +37,32 @@ class Sweeper:
 
         if "learning_rate" in sweep_parameters:
             self.config["learning_rate"] = wandb_config.learning_rate
-            print(f"learning rate: {self.config['learning_rate']}")
+            if self.verbose:
+                print(f"learning rate: {self.config['learning_rate']}")
         if "rank" in sweep_parameters:
             self.config["lora_parameters"]["rank"] = wandb_config.rank
-            print(f"lora rank: {self.config['lora_parameters']['rank']}")
-        if "alpha" in sweep_parameters:
-            self.config["lora_parameters"]["alpha"] = wandb_config.alpha
-            print(f"lora alpha: {self.config['lora_parameters']['alpha']}")
+            if self.verbose:
+                print(f"LoRA rank: {self.config['lora_parameters']['rank']}")
+        if "scale" in sweep_parameters:
+            self.config["lora_parameters"]["scale"] = wandb_config.scale
+            if self.verbose:
+                print(f"LoRA config: {self.config['lora_parameters']['scale']}")
         if "dropout" in sweep_parameters:
             self.config["lora_parameters"]["dropout"] = wandb_config.dropout
-            print(f"lora dropout: {self.config['lora_parameters']['dropout']}")
+            if self.verbose:
+                print(f"LoRA dropout: {self.config['lora_parameters']['dropout']}")
         if "batch_size" in sweep_parameters:
             self.config["batch_size"] = wandb_config.batch_size
-            print(f"batch size: {self.config['batch_size']}")
+            if self.verbose:
+                print(f"batch size: {self.config['batch_size']}")
+        self.config["mask_inputs"] = self.mask_inputs
+        self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
+        self.config["validation_interval_proportion"] = TF_CONFIG_DEFAULTS["validation_interval_proportion"]
+        self.config["validations_per_train_item"] = TF_CONFIG_DEFAULTS["validations_per_train_item"]
+        self.config["reporting_interval_proportion"] = TF_CONFIG_DEFAULTS["reporting_interval_proportion"]
+        self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
 
         args = SimpleNamespace(**self.config)
-        training_callback = WandbCallback(tqdm(total=args.iters))
 
         np.random.seed(args.seed)
 
@@ -143,56 +71,101 @@ class Sweeper:
 
         # Freeze all layers
         model.freeze()
-        # Convert linear layers to lora layers and unfreeze in the process
-        linear_to_lora_layers(model, args.lora_layers, self.config["lora_parameters"])
+        linear_to_lora_layers(
+            model,
+            args.num_layers,
+            args.lora_parameters,
+            use_dora=self.train_type in DORA_TRAIN_TYPES,
+        )
 
-        names = ("train", "valid", "test")
-        if self.train_type == 'completion-only':
-            dataset = Dataset
-        else:
-            dataset = mlx_lm_dataset
-        train_set, valid_set, test_set = (dataset(Path(args.data) / f"{n}.jsonl") for n in names)
+        print("Loading datasets")
+        train_set, valid_set, test_set = load_dataset(args, tokenizer)
 
-
-        if "learning_schedule" in self.config:
-            scheduler = SCHEDULE_CONFIGURATION_TYPE_TO_CLASS[
-                self.config["learning_schedule"]["type"]].from_configuration(args.learning_rate, self.config,
-                                                                             args.iters)
-        else:
-            scheduler = args.learning_rate
-
+        # Resume training the given adapters.
         if args.resume_adapter_file is not None:
             print(f"Loading pretrained adapters from {args.resume_adapter_file}")
             model.load_weights(args.resume_adapter_file, strict=False)
 
-        adapter_path = Path(args.adapter_path)
-        adapter_path.mkdir(parents=True, exist_ok=True)
-        save_config(vars(args), adapter_path / "adapter_config.json")
-        adapter_file = adapter_path / "adapters.safetensors"
-
-        trainingArgs = TrainingArgs(
-            batch_size=args.batch_size,
-            iters=args.iters,
-            val_batches=args.val_batches,
-            steps_per_report=args.steps_per_report,
-            steps_per_eval=args.steps_per_eval,
-            steps_per_save=args.save_every,
-            adapter_file=adapter_file,
-            max_seq_length=args.max_seq_length,
-        )
         print("Training")
         model.train()
-        opt = optim.Adam(learning_rate=scheduler)
+
+        epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
+        if args.epochs == -1:
+            num_iterations = epoch_num_steps if args.iters == -1 else args.iters
+        else:
+            num_iterations = epoch_num_steps * args.epochs
+        num_iterations = int(num_iterations)
+
+        print(
+            f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
+            f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
+            f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
+        )
+
+        if args.evals_per_epoch:
+            scaled_steps_per_eval = int(epoch_num_steps / args.evals_per_epoch)
+            scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
+                                     ) if args.eval_proportion_of_total else (
+                int(len(valid_set) / ((args.evals_per_epoch - 1) * args.batch_size))
+            )
+        else:
+            scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
+            scaled_val_batches = int(
+                args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
+
+        scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
+
+        if args.saves_per_epoch:
+            scaled_save_every = int(epoch_num_steps / args.saves_per_epoch)
+        else:
+            scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
+
+        print(
+            f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
+            f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
+            f"and saving the adapter every {scaled_save_every:,} steps."
+        )
+        opt = optim.Adam(
+            learning_rate=(
+                build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
+            )
+        )
+        if self.mask_inputs:
+            print("Masking inputs")
+            if isinstance(args.response_template, str):
+                response_generation_tokens = tokenizer.encode(args.response_template, add_special_tokens=False)
+            elif args.response_template == None:
+                raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
+            else:
+                if not all([item.isinstance(int) for item in args.response_template]):
+                    raise ValueError("Response template must be a list of integers if it is not a string.")
+                response_generation_tokens = args.response_template
+            response_generation_tokens = no_bos_or_eos(response_generation_tokens,
+                                                       tokenizer.bos_token_id,
+                                                       tokenizer.eos_token_id
+                                                       ) if len(
+                response_generation_tokens) > 1 else response_generation_tokens
+            input_masker = InputMasker(response_generation_tokens)
+        else:
+            input_masker = None
         train(
             model=model,
             tokenizer=tokenizer,
-            args=trainingArgs,
             optimizer=opt,
             train_dataset=train_set,
             val_dataset=valid_set,
-            loss=self.loss_fn,
-            iterate_batches=self.iterate_batches_fn,
-            training_callback=training_callback,
+            args = TrainingArgs(batch_size=args.batch_size,
+                                iters=num_iterations,
+                                val_batches=scaled_val_batches,
+                                steps_per_report=scaled_steps_per_report,
+                                steps_per_eval=scaled_steps_per_eval,
+                                steps_per_save=scaled_save_every,
+                                max_seq_length=args.max_seq_length),
+            iterate_batches=(
+                input_masker.iterate_completion_batches if args.mask_inputs else iterate_batches
+            ),
+            loss=input_masked_loss if self.mask_inputs else default_loss,
+            training_callback=WandbCallback(tqdm(total=num_iterations))
         )
 
 
@@ -200,24 +173,38 @@ class Sweeper:
 @click.option('--verbose/--no-verbose', default=False)
 @click.option('--wandb-project', default=None, type=str, help='Wandb project name')
 @click.option('--train-type',
-              type=click.Choice(['completion-only', 'self-supervised'], case_sensitive=False),
-              default="completion-only")
-@click.option('-f', '--prompt-format',
-              type=click.Choice(['mistral', 'chatml', 'llama3', 'alpaca', 'phi'], case_sensitive=False))
+              type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
+              default="lora-completion-only")
+@click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.argument('config_file', type=click.File('r'))
-def main(verbose, wandb_project, train_type, prompt_format, config_file):
+def main(verbose, wandb_project, train_type, mask_inputs, config_file):
     if wandb is None:
         raise ImportError('wandb module not available.  Install with `pip install wandb`')
+    yaml_loader = yaml.SafeLoader
+    yaml_loader.add_implicit_resolver(
+        "tag:yaml.org,2002:float",
+        re.compile(
+            """^(?:
+         [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
+        |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
+        |\\.[0-9_]+(?:[eE][-+][0-9]+)?
+        |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
+        |[-+]?\\.(?:inf|Inf|INF)
+        |\\.(?:nan|NaN|NAN))$""",
+            re.X,
+        ),
+        list("-+0123456789."),
+    )
     config = yaml.load(config_file, yaml_loader)
     sweep_id = wandb.sweep(sweep=config["sweep_configuration"], project=wandb_project)
 
     # Update defaults for unspecified parameters
-    for k, v in CONFIG_DEFAULTS.items():
-        if not config.get(k, None):
-            config[k] = v
-    global prompt_formatter
-    prompt_formatter = get_prompt_formatter(prompt_format)
-    wandb.agent(sweep_id, function=Sweeper(wandb_project, config, train_type).sweep)
+    for config_defaults in [{k:v for k,v in CONFIG_DEFAULTS.items() if k not in TF_CONFIG_DEFAULTS},
+                            TF_CONFIG_DEFAULTS]:
+        for k, v in config_defaults.items():
+            if not config.get(k, None):
+                config[k] = v
+    wandb.agent(sweep_id, function=Sweeper(verbose, wandb_project, config, train_type, mask_inputs).sweep)
 
 
 if __name__ == '__main__':
