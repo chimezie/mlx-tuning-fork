@@ -1,5 +1,7 @@
 import warnings
-
+import click
+import yaml
+import math
 import mlx.optimizers as optim
 from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
@@ -7,9 +9,6 @@ from mlx_lm.utils import load, save_config
 from mlx_lm.lora import print_trainable_parameters
 from types import SimpleNamespace
 from tqdm import tqdm
-import click
-import yaml
-import math
 from mlx_tuning_fork.dataset import load_dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
 from mlx_tuning_fork.tuning.input_masking import input_masked_loss, InputMasker
@@ -32,38 +31,53 @@ DORA_TRAIN_TYPES = ['dora']
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
-@click.argument('config_file')
-def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, config_file):
-    tokenizer_config = {}
-    with open(config_file, "r") as file:
-        config = yaml.load(file, yaml_loader)
-        param_dict = {k: v for k, v in config.items()}
-        if "model" not in param_dict:
-            raise SyntaxError('Missing required "model" parameter')
-        for key, default in CONFIG_DEFAULTS.items():
-            if key not in param_dict:
-                param_dict[key] = default
-        param_dict["verbose"] = verbose
-        tokenizer_config = {"trust_remote_code": True if param_dict.get("trust_remote_code") else None}
-        param_dict_eos_token = param_dict.get("eos_token")
-        if param_dict_eos_token is not None:
-            tokenizer_config["eos_token"] = param_dict["eos_token"]
-        if verbose:
-            pprint(param_dict)
-        args = SimpleNamespace(**param_dict)
+@click.argument('config_files', nargs=-1)
+def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, config_files):
+    previous_adapter = None
+    model = None
+    for config_file in config_files:
+        tokenizer_config = {}
+        with open(config_files, "r") as file:
+            config = yaml.load(file, yaml_loader)
+            param_dict = {k: v for k, v in config.items()}
+            if "model" not in param_dict and len(config_files) == 1:
+                raise SyntaxError('Missing required "model" parameter')
+            for key, default in CONFIG_DEFAULTS.items():
+                if key not in param_dict:
+                    param_dict[key] = default
+            param_dict["verbose"] = verbose
+            tokenizer_config = {"trust_remote_code": True if param_dict.get("trust_remote_code") else None}
+            param_dict_eos_token = param_dict.get("eos_token")
+            if param_dict_eos_token is not None:
+                tokenizer_config["eos_token"] = param_dict["eos_token"]
+            if verbose:
+                pprint(param_dict)
+            if previous_adapter is not None:
+                param_dict["resume_adapter_file"] = previous_adapter
+            args = SimpleNamespace(**param_dict)
 
-    print("Loading pretrained model")
-    model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
-    model.freeze()
+        if previous_adapter is None:
+            print("Loading pretrained model")
+            model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
+        else:
+            print(f"Using previous model & adapters")
+        model.freeze()
+
+        composably_train(args, config, config_file, mask_inputs, model, summary, tokenizer, train_type, wandb_project,
+                         wandb_run)
+        if len(config_files) > 1:
+            previous_adapter = args.adapter_path
+            model.unfreeze()
+
+def composably_train(args, config, config_file, mask_inputs, model, summary, tokenizer, train_type, wandb_project,
+                     wandb_run):
     linear_to_lora_layers(
         model,
         args.num_layers,
         args.lora_parameters,
         use_dora=train_type in DORA_TRAIN_TYPES,
     )
-
     print_trainable_parameters(model)
-
     training_callback = None
     if wandb_project:
         if wandb_run is None:
@@ -73,10 +87,8 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
         except ImportError:
             raise ImportError('wandb module not available.  Install with `pip install wandb`')
         wandb.init(project=wandb_project, name=wandb_run, config=config)
-
     print("Loading datasets")
     train_set, valid_set, test_set = load_dataset(args, tokenizer)
-
     if args.train and len(train_set) == 0:
         raise ValueError(
             "Training set not found or empty. Must provide training set for fine-tuning."
@@ -89,23 +101,19 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
         raise ValueError(
             "Test set not found or empty. Must provide test_set set for evaluation."
         )
-
     epoch_num_steps = (len(train_set) + args.batch_size - 1) // args.batch_size
     if args.epochs == -1:
         num_iterations = epoch_num_steps if args.iters == -1 else args.iters
     else:
         num_iterations = epoch_num_steps * args.epochs
     num_iterations = int(num_iterations)
-
     if wandb_project:
         training_callback = WandbCallback(tqdm(total=num_iterations))
-
     print(
         f"{num_iterations:,} iterations at {epoch_num_steps:,} iterations per epoch on a dataset of "
         f"{len(train_set):,} records, {args.batch_size} at a time and with a validation set of "
         f"{len(valid_set):,} records, training {args.num_layers} layers out of {len(model.layers)} using qLoRa."
     )
-
     if args.evals_per_epoch:
         scaled_steps_per_eval = int(epoch_num_steps / args.evals_per_epoch)
         scaled_val_batches = int(len(valid_set) * args.eval_proportion_of_total / args.batch_size
@@ -115,14 +123,11 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
     else:
         scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
         scaled_val_batches = int(args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
-
     scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
-
     if args.saves_per_epoch:
         scaled_save_every = int(epoch_num_steps / args.saves_per_epoch)
     else:
         scaled_save_every = int(args.adapter_save_interval_proportion * num_iterations)
-
     print(
         f"Calculating loss every {scaled_steps_per_report:,} steps, reporting validation loss every "
         f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
@@ -145,7 +150,8 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
         response_generation_tokens = no_bos_or_eos(response_generation_tokens,
                                                    tokenizer.bos_token_id,
                                                    tokenizer.eos_token_id
-                                                   ) if len(response_generation_tokens) > 1 else response_generation_tokens
+                                                   ) if len(
+            response_generation_tokens) > 1 else response_generation_tokens
         input_masker = InputMasker(response_generation_tokens)
     else:
         input_masker = None
@@ -244,6 +250,7 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
               f"            --steps-per-eval {scaled_steps_per_eval} \\\n"
               f"            --save-every {scaled_save_every} \\\n"
               f"            --iters {num_iterations} -c {config_file}")
+
 
 if __name__ == '__main__':
     main()

@@ -68,6 +68,15 @@ test_messages = [
     )
 ]
 
+def count_leading_zeros(numbers: list[int]) -> int:
+    count = 0
+    for value in numbers:
+        if value == 0:
+            count += 1
+        else:
+            break
+    return count
+
 def remove_trailing_zeros(nums):
     """
     Removes any trailing sequence of zeros from the list of integers.
@@ -88,8 +97,10 @@ class TestInputMasking:
         ds = []
         post_processing_output = {}
         for text, tokenization, input_masked_padded in test_messages:
+            length = len(tokenization)
             ds.append(tokenization)
-            post_processing_output[tuple(input_masked_padded)] = text
+            response_prefix_length = remove_trailing_zeros(tokenization)
+            post_processing_output[tuple(input_masked_padded)] = (response_prefix_length, text, length)
         ds = MockDataset(ds)
         masker = InputMasker(GEMMA_RESPONSE_GENERATION_TOKENS)
         for inputs, response_prefix_lengths, lengths in masker.iterate_completion_batches(ds,
@@ -99,4 +110,7 @@ class TestInputMasking:
             for item in [*inputs]:
                 as_list = item.tolist()
                 as_list_no_r_padding = remove_trailing_zeros(as_list)
-                assert tuple(as_list_no_r_padding) in post_processing_output
+                info = post_processing_output.get(tuple(as_list_no_r_padding))
+                assert info is not None
+                assert response_prefix_length == count_leading_zeros(info[1])
+                assert lengths == info[2]

@@ -70,8 +70,6 @@ class InputMasker:
                 batch = []
                 for j in batch_idx[i]:
                     full_sequence = dataset[j]
-                    if full_sequence[-1] != tokenizer.eos_token_id:
-                        full_sequence.append(tokenizer.eos_token_id)
                     batch.append(full_sequence)
                     if len(self.response_generation_tokens) > 1:
                         response_marker_begin, response_marker_end = contains(
