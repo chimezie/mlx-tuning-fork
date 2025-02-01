@@ -31,8 +31,10 @@ DORA_TRAIN_TYPES = ['dora']
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
+@click.option('--pad-to', default=8, type=int,
+              help='Padding amount')
 @click.argument('config_files', nargs=-1)
-def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, config_files):
+def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, pad_to, config_files):
     previous_adapter = None
     model = None
     for config_file in config_files:
@@ -70,7 +72,7 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, co
             model.unfreeze()
 
 def composably_train(args, config, config_file, mask_inputs, model, summary, tokenizer, train_type, wandb_project,
-                     wandb_run):
+                     wandb_run, pad_to):
     linear_to_lora_layers(
         model,
         args.num_layers,
@@ -152,7 +154,7 @@ def composably_train(args, config, config_file, mask_inputs, model, summary, tok
                                                    tokenizer.eos_token_id
                                                    ) if len(
             response_generation_tokens) > 1 else response_generation_tokens
-        input_masker = InputMasker(response_generation_tokens)
+        input_masker = InputMasker(response_generation_tokens, pad_to=pad_to)
     else:
         input_masker = None
     if not summary:

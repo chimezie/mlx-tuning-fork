@@ -107,10 +107,10 @@ class TestInputMasking:
                                                                                           MockTokenizer(),
                                                                                           2,
                                                                                           2048):
-            for item in [*inputs]:
+            for idx, item in enumerate([*inputs]):
                 as_list = item.tolist()
                 as_list_no_r_padding = remove_trailing_zeros(as_list)
                 info = post_processing_output.get(tuple(as_list_no_r_padding))
                 assert info is not None
-                assert response_prefix_length == count_leading_zeros(info[1])
-                assert lengths == info[2]
+                assert response_prefix_lengths[idx].item() == count_leading_zeros(as_list)
+                assert lengths[idx] == info[2]

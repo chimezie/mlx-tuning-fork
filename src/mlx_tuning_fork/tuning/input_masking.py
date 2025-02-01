@@ -33,8 +33,9 @@ class InputMasker:
     to iterate_batches functions to allow them to receive information about how to distinguish
     between input tokens and the rest of the sequence for arbitrary prompt formats and tokenizers.
     """
-    def __init__(self, response_generation_tokens: Optional[List[int]] = None):
+    def __init__(self, response_generation_tokens: Optional[List[int]] = None, pad_to: Optional[int] = 8):
         self.response_generation_tokens = response_generation_tokens
+        self.pad_to = pad_to
 
     def iterate_completion_batches(self,
                                    dataset: CompletionsDataset,
@@ -43,7 +44,7 @@ class InputMasker:
                                    max_seq_length: int,
                                    train: bool = False):
         """
-        A version of iterate_batches that works with completion datasets, tracks the boundaries between
+        A version of mlx_lm.tuner.trainer.iterate_batches that works with completion datasets, tracks the boundaries between
         input/output tokens and returns the lengths of input tokens as well as that of the full sequences.
         """
         idx = sorted(range(len(dataset)), key=lambda i: len(dataset[i]))
@@ -83,6 +84,12 @@ class InputMasker:
                         response_prefix_lengths.append(response_marker_begin + 1)
 
                 lengths = [len(x) for x in batch]
+                if max(lengths) > max_seq_length:
+                    print(
+                        f"[WARNING] Some sequences (out of {len(batch)}) are longer than {max_seq_length} tokens. "
+                        f"The longest sentence {max(lengths)} will be truncated to {max_seq_length}. "
+                        "Consider pre-splitting your data to save memory."
+                    )
 
                 if max(lengths) > max_seq_length:
                     print(
@@ -92,7 +99,7 @@ class InputMasker:
                     )
 
                 # Pad to the nearest multiple of 8 or the maximum length
-                pad_to = 8
+                pad_to = self.pad_to
                 max_length_in_batch = pad_to * ((max(lengths) + pad_to - 1) // pad_to)
                 max_length_in_batch = min(max_length_in_batch, max_seq_length)
 
