@@ -10,23 +10,20 @@ import numpy as np
 import mlx.optimizers as optim
 from types import SimpleNamespace
 from mlx_tuning_fork.reporting import WandbCallback
-from mlx_tuning_fork.tuning.input_masking import input_masked_loss, InputMasker
-from mlx_tuning_fork.tuning.utils import no_bos_or_eos
 from .training import ALL_TRAIN_TYPES, DORA_TRAIN_TYPES
 from mlx_lm.utils import load
 from mlx_tuning_fork.config import CONFIG_DEFAULTS as TF_CONFIG_DEFAULTS
 from mlx_lm.tuner.datasets import load_dataset
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
-from mlx_lm.tuner.trainer import TrainingArgs, train, default_loss, iterate_batches
+from mlx_lm.tuner.trainer import TrainingArgs, train
 from mlx_lm.lora import CONFIG_DEFAULTS
 
 class Sweeper:
-    def __init__(self, verbose, project_name, config, train_type, mask_inputs):
+    def __init__(self, verbose, project_name, config, train_type):
         self.verbose = verbose
         self.project_name = project_name
         self.config = config
         self.train_type = train_type
-        self.mask_inputs = mask_inputs
 
     def sweep(self):
         if wandb is None:
@@ -55,7 +52,6 @@ class Sweeper:
             self.config["batch_size"] = wandb_config.batch_size
             if self.verbose:
                 print(f"batch size: {self.config['batch_size']}")
-        self.config["mask_inputs"] = self.mask_inputs
         self.config["eval_proportion_of_total"] = TF_CONFIG_DEFAULTS["eval_proportion_of_total"]
         self.config["validation_interval_proportion"] = TF_CONFIG_DEFAULTS["validation_interval_proportion"]
         self.config["validations_per_train_item"] = TF_CONFIG_DEFAULTS["validations_per_train_item"]
@@ -130,24 +126,6 @@ class Sweeper:
                 build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
             )
         )
-        if self.mask_inputs:
-            print("Masking inputs")
-            if isinstance(args.response_template, str):
-                response_generation_tokens = tokenizer.encode(args.response_template, add_special_tokens=False)
-            elif args.response_template == None:
-                raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
-            else:
-                if not all([item.isinstance(int) for item in args.response_template]):
-                    raise ValueError("Response template must be a list of integers if it is not a string.")
-                response_generation_tokens = args.response_template
-            response_generation_tokens = no_bos_or_eos(response_generation_tokens,
-                                                       tokenizer.bos_token_id,
-                                                       tokenizer.eos_token_id
-                                                       ) if len(
-                response_generation_tokens) > 1 else response_generation_tokens
-            input_masker = InputMasker(response_generation_tokens)
-        else:
-            input_masker = None
         train(
             model=model,
             tokenizer=tokenizer,
@@ -161,10 +139,6 @@ class Sweeper:
                                 steps_per_eval=scaled_steps_per_eval,
                                 steps_per_save=scaled_save_every,
                                 max_seq_length=args.max_seq_length),
-            iterate_batches=(
-                input_masker.iterate_completion_batches if args.mask_inputs else iterate_batches
-            ),
-            loss=input_masked_loss if self.mask_inputs else default_loss,
             training_callback=WandbCallback(tqdm(total=num_iterations))
         )
 
@@ -175,9 +149,8 @@ class Sweeper:
 @click.option('--train-type',
               type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
               default="lora-completion-only")
-@click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.argument('config_file', type=click.File('r'))
-def main(verbose, wandb_project, train_type, mask_inputs, config_file):
+def main(verbose, wandb_project, train_type, config_file):
     if wandb is None:
         raise ImportError('wandb module not available.  Install with `pip install wandb`')
     yaml_loader = yaml.SafeLoader
@@ -204,7 +177,7 @@ def main(verbose, wandb_project, train_type, mask_inputs, config_file):
         for k, v in config_defaults.items():
             if not config.get(k, None):
                 config[k] = v
-    wandb.agent(sweep_id, function=Sweeper(verbose, wandb_project, config, train_type, mask_inputs).sweep)
+    wandb.agent(sweep_id, function=Sweeper(verbose, wandb_project, config, train_type).sweep)
 
 
 if __name__ == '__main__':

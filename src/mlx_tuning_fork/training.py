@@ -3,16 +3,14 @@ import click
 import yaml
 import math
 import mlx.optimizers as optim
-from mlx_lm.tuner.trainer import TrainingArgs, default_loss, evaluate, train, iterate_batches
+from mlx_lm.tuner.trainer import TrainingArgs, evaluate, train, iterate_batches
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
+from mlx_lm.tuner.datasets import load_dataset
 from mlx_lm.utils import load, save_config
 from mlx_lm.lora import print_trainable_parameters
 from types import SimpleNamespace
 from tqdm import tqdm
-from mlx_tuning_fork.dataset import load_dataset
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
-from mlx_tuning_fork.tuning.input_masking import input_masked_loss, InputMasker
-from mlx_tuning_fork.tuning.utils import no_bos_or_eos
 from mlx_tuning_fork.reporting import WandbCallback
 from pathlib import Path
 from pprint import pprint
@@ -26,20 +24,17 @@ DORA_TRAIN_TYPES = ['dora']
 @click.option('--train-type',
               type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
               default="lora-completion-only")
-@click.option('--mask-inputs/--no-mask-inputs', default=False)
 @click.option('--wandb-project', default=None, type=str,
               help='Wandb project name')
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
-@click.option('--pad-to', default=8, type=int,
-              help='Padding amount')
 @click.argument('config_files', nargs=-1)
-def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, pad_to, config_files):
+def main(verbose, summary, train_type, wandb_project, wandb_run, config_files):
     previous_adapter = None
     model = None
     for config_file in config_files:
         tokenizer_config = {}
-        with open(config_files, "r") as file:
+        with open(config_file, "r") as file:
             config = yaml.load(file, yaml_loader)
             param_dict = {k: v for k, v in config.items()}
             if "model" not in param_dict and len(config_files) == 1:
@@ -65,14 +60,14 @@ def main(verbose, summary, train_type, mask_inputs, wandb_project, wandb_run, pa
             print(f"Using previous model & adapters")
         model.freeze()
 
-        composably_train(args, config, config_file, mask_inputs, model, summary, tokenizer, train_type, wandb_project,
+        composably_train(args, config, config_file, model, summary, tokenizer, train_type, wandb_project,
                          wandb_run)
         if len(config_files) > 1:
             previous_adapter = args.adapter_path
             model.unfreeze()
 
-def composably_train(args, config, config_file, mask_inputs, model, summary, tokenizer, train_type, wandb_project,
-                     wandb_run, pad_to):
+def composably_train(args, config, config_file, model, summary, tokenizer, train_type, wandb_project,
+                     wandb_run):
     linear_to_lora_layers(
         model,
         args.num_layers,
@@ -135,28 +130,6 @@ def composably_train(args, config, config_file, mask_inputs, model, summary, tok
         f"{scaled_steps_per_eval:,} steps, validating with {scaled_val_batches:,} batches, "
         f"and saving the adapter every {scaled_save_every:,} steps."
     )
-    if mask_inputs:
-        print("Masking inputs")
-        if isinstance(args.response_template, str):
-            response_generation_tokens = tokenizer.encode(
-                args.response_template, add_special_tokens=False
-            )
-        elif args.response_template == None:
-            raise ValueError("Need to specify 'response_template' in order to be able to mask inputs")
-        else:
-            if not all([item.isinstance(int) for item in args.response_template]):
-                raise ValueError(
-                    "Response template must be a list of integers if it is not a string."
-                )
-            response_generation_tokens = args.response_template
-        response_generation_tokens = no_bos_or_eos(response_generation_tokens,
-                                                   tokenizer.bos_token_id,
-                                                   tokenizer.eos_token_id
-                                                   ) if len(
-            response_generation_tokens) > 1 else response_generation_tokens
-        input_masker = InputMasker(response_generation_tokens, pad_to=pad_to)
-    else:
-        input_masker = None
     if not summary:
         # Resume training the given adapters.
         if args.resume_adapter_file is not None:
@@ -191,10 +164,6 @@ def composably_train(args, config, config_file, mask_inputs, model, summary, tok
                                   steps_per_save=scaled_save_every,
                                   max_seq_length=args.max_seq_length,
                                   adapter_file=str(adapter_file)),
-                iterate_batches=(
-                    input_masker.iterate_completion_batches if mask_inputs else iterate_batches
-                ),
-                loss=input_masked_loss if mask_inputs else default_loss,
                 training_callback=training_callback
             )
 
@@ -216,11 +185,7 @@ def composably_train(args, config, config_file, mask_inputs, model, summary, tok
                 dataset=test_set,
                 tokenizer=tokenizer,
                 batch_size=args.batch_size,
-                num_batches=args.test_batches,
-                loss=input_masked_loss if mask_inputs else default_loss,
-                iterate_batches=(
-                    input_masker.iterate_completion_batches if mask_inputs else iterate_batches
-                ),
+                num_batches=args.test_batches
             )
 
             test_ppl = math.exp(test_loss)
@@ -233,7 +198,7 @@ def composably_train(args, config, config_file, mask_inputs, model, summary, tok
         _lengths = []
         for it, info in zip(
                 range(1, num_iterations + 1),
-                (input_masker.iterate_completion_batches if mask_inputs else iterate_batches)(
+                iterate_batches(
                     dataset=train_set,
                     tokenizer=tokenizer,
                     batch_size=args.batch_size,
