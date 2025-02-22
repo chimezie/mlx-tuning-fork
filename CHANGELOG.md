@@ -16,6 +16,4 @@ Major synchronization to changes in MLX
 - Schedule configiration (use MLXes)
 - Colorize option
 
-### Fixed
-
 
