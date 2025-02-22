@@ -6,7 +6,7 @@
 Major synchronization to changes in MLX
 
 ### Added
-- New mlxmlx_tuning_fork_generate CLI command.
+- New mlx_tuning_fork_generate CLI command.
 - Improved documentation
 - Configuration for DoRA fine tuning 
 - Summary of how to perform mlx CLI fine tuning using generated parameters
