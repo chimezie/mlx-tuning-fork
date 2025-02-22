@@ -1,9 +1,9 @@
 # mlx-tuning-fork
-A very basic framework for parameterized 
-Large Language Model (Q)LoRa fine-tuning with MLX.  It uses [mlx](https://github.com/ml-explore/mlx), [mlx_lm](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm), 
+A very basic framework for composable, parameterized 
+Large Language Model (Q or D)LoRa fine-tuning with MLX.  It uses [MLX](https://github.com/ml-explore/mlx), [mlx_lm](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm), 
 and [OgbujiPT](https://github.com/OoriData/OgbujiPT), and is based primarily on the excellent mlx-example libraries
-but adds very minimal architecture for systematic running of easily parameterized fine tunes, hyperparameter sweeping,
-declarative prompt construction, an equivalent of HF's [train on completions](https://huggingface.co/docs/trl/sft_trainer#train-on-completions-only), and other capabilities.  
+but adds very minimal architecture for model fine tuning, hyperparameter sweeping, and other capabilities
+for the most common needs.  
 
 ## Installation
 
@@ -14,39 +14,34 @@ $ pip install mlx-tuning-fork
 ```
 
 ## Command-line options
-You can get documentation of the command-line options for the fine-tuning command (**mlx_tuning_fork_training**) via:
+You can get documentation of the command-line options for the fine-tuning command 
+([**mlx_tuning_fork_training**](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/examples/lora_config.yaml#L38)) 
+via:
 
 ```commandline
 % mlx_tuning_fork_training --help
-Usage: python -m mlx_tuning_fork.training [OPTIONS] CONFIG_FILE
+Usage: mlx_tuning_fork_training [OPTIONS] [CONFIG_FILES]...
 
 Options:
   --verbose / --no-verbose
-  --summary / --no-summary        Just summarize training data
-  --train-type [lora-completion-only|dora-completion-only|lora-self-supervised|dora-self-supervised]
-  -f, --prompt-format [mistral|chatml|llama3|alpaca|phi|gemma]
-  --wandb-project TEXT            Wandb project name
-  --wandb-run TEXT                Wandb run name
-  --help                          Show this message and exit.
+  --summary / --no-summary  Just summarize training data
+  --train-type [lora|dora]
+  --wandb-project TEXT      Wandb project name
+  --wandb-run TEXT          Wandb run name
+  --help                    Show this message and exit.
 ```
-
-The format of the prompts used to train the model is specified via the `-f/--prompt-format` option, which currently
-is one of:
-
-- mistra
-- chatml
-- llama3
-- alpaca
-- phi
-- gemma
 
 ## Configuration
 
 It uses mlx_lm's [YAML config format](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/examples/lora_config.yaml) 
-and adds additional parameters and sections.
+and adds additional parameters and sections in a configuration file that represents a unit of training.  These
+are composable in the sense that they can be called one after another, with the resulting adapters
+from one step of evaluating a configuration file as the basis (**resume_adapter_file**) for a subsequent one.
 
-It provides configurations that can be used to automatically determine values for the [mlx_lm fine-tuning parameters](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/LORA.md#fine-tune) that configure
-how the training is run:
+In this way, the configurations orchestrate the use of MLX for continuous pretraining followed by instruction fine tuning. 
+
+It provides configurations parameters that can be used to automatically determine values for the 
+[mlx_lm fine-tuning parameters](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/LORA.md#fine-tune) that configure how the training is run:
 
 - the total number of steps/iterations to run (`iters`)
 - the number of iterations between validation runs to evaluate the model (`steps_per_eval`, same semantics as [axolotl's](https://axolotl-ai-cloud.github.io/axolotl/docs/config.html) `eval_steps`)
@@ -72,30 +67,6 @@ In particular, the following additional configurations can be used to automatica
     * If provided, it is used to determine `save_every`
 * **adapter_save_interval_proportion** (Same proportions for intervals between saving the LoRa adapter - defaults to .1)
     * Used to determine `save_ever` if `saves_per_epoch` is not provided
-
-## Learning Rate Schedules
-
-Learning rate schedulers can be specified in the configuration file with a section such as the following (
-for Cosine annealing):
-
-```yaml
-learning_schedule:
-  type: "cosine"
-  max_lr: 2e-5 #upper bound for learning rate 
-  cycle_length: -1 #-1 for the number of steps/iterations in 1 epoch or a specific number otherwise (LR set to min_lr afterwards)
-```
-The following for Cosine Annealing with proportional warmup:
-
-```yaml
-learning_schedule:
-  type: "cosine_w_warmup"
-  start_lr: 1e-8 #learning rate used at start of the warm-up, which ends at the top-level learning rate
-  warmup_proportion: .1 #proportion of steps/iterations in 1 epoch to spend warming up
-  min_lr: 1e-7
-  cycle_length: -1
-```
-
-Otherwise a constant learning rate (specified via **learning_rate** top-level configuration variable) is used throughout
 
 ## Generation
 
@@ -216,21 +187,6 @@ The patient has Lymphoid aggregate.  Summarize the patient's problems
 <|im_end|>
 <|im_start|>assistant
 ```
-
-## Dataset format
-
-The dataset files are expected to be in this format:
-
-```json
-{"input": "[..]", 
- "output": "[..]"}
-```
-
-## Learning (completion-only v.s. self-supervised)
-By default, mlx_tuning_fork will train on completions only, using the **input** field for the input prompt and **output** for 
-the expected output.  However, you can use mlx_lm's default self-supervised
-learning using the `--train-type` with a value of _self-supervised_.  In this case, only the value of the output field
-in the training data is used. 
 
 ## Running Weights and Biases (Wandb) Hyperparameter Sweeps ##
 
