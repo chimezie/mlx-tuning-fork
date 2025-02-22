@@ -116,7 +116,7 @@ def composably_train(args, config, config_file, model, summary, tokenizer, train
         scaled_steps_per_eval = int(num_iterations * args.validation_interval_proportion)
         scaled_val_batches = int(args.validations_per_train_item * args.validation_interval_proportion * num_iterations)
     scaled_val_batches = max(1, scaled_val_batches)
-    scaled_steps_per_report = int(args.reporting_interval_proportion * num_iterations)
+    scaled_steps_per_report = max(1, int(args.reporting_interval_proportion * num_iterations))
     if args.saves_per_epoch:
         scaled_save_every = int(epoch_num_steps / args.saves_per_epoch)
     else:

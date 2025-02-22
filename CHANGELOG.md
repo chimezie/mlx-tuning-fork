@@ -11,9 +11,11 @@ Major synchronization to changes in MLX
 - Configuration for DoRA fine tuning 
 - Summary of how to perform mlx CLI fine tuning using generated parameters
 - Composable configurations  
+- axolotl-like configuration parameters for automatically determining values for the mlx_lm fine-tuning parameters
 
 ### Removed
 - Schedule configiration (use MLXes)
 - Colorize option
+- 
 
 
