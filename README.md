@@ -41,8 +41,8 @@ from one step of evaluating a configuration file as the basis (**resume_adapter_
 In this way, configurations can orchestrate the use of MLX for continuous pretraining followed by instruction 
 fine tuning, for example. 
 
-It provides configurations parameters that can be used to automatically determine values for the 
-[mlx_lm fine-tuning parameters](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/LORA.md#fine-tune) that configure how the training is run:
+It provides configuration parameters for automatically determining values for [mlx_lm fine-tuning parameters](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/LORA.md#fine-tune) that 
+configure how the training is run:
 
 - the total number of steps/iterations to run (`iters`)
 - the number of iterations between validation runs to evaluate the model (`steps_per_eval`, same semantics as [axolotl's](https://axolotl-ai-cloud.github.io/axolotl/docs/config.html) `eval_steps`)
