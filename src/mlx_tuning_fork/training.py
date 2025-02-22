@@ -31,9 +31,7 @@ DORA_TRAIN_TYPES = ['dora']
 @click.argument('config_files', nargs=-1)
 def main(verbose, summary, train_type, wandb_project, wandb_run, config_files):
     previous_adapter = None
-    model = None
     for config_file in config_files:
-        tokenizer_config = {}
         with open(config_file, "r") as file:
             config = yaml.load(file, yaml_loader)
             param_dict = {k: v for k, v in config.items()}
@@ -47,24 +45,21 @@ def main(verbose, summary, train_type, wandb_project, wandb_run, config_files):
             param_dict_eos_token = param_dict.get("eos_token")
             if param_dict_eos_token is not None:
                 tokenizer_config["eos_token"] = param_dict["eos_token"]
-            if verbose:
-                pprint(param_dict)
             if previous_adapter is not None:
                 param_dict["resume_adapter_file"] = previous_adapter
             args = SimpleNamespace(**param_dict)
-
-        if previous_adapter is None:
-            print("Loading pretrained model")
-            model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
-        else:
-            print(f"Using previous model & adapters")
+            if verbose:
+                pprint(param_dict)
+        print("Loading pretrained model")
+        model, tokenizer = load(args.model, tokenizer_config=tokenizer_config)
+        if previous_adapter is not None:
+            print(f"Using previous model & adapters ({previous_adapter})")
         model.freeze()
 
         composably_train(args, config, config_file, model, summary, tokenizer, train_type, wandb_project,
                          wandb_run)
         if len(config_files) > 1:
-            previous_adapter = args.adapter_path
-            model.unfreeze()
+            previous_adapter = str(Path(args.adapter_path) / "adapters.safetensors")
 
 def composably_train(args, config, config_file, model, summary, tokenizer, train_type, wandb_project,
                      wandb_run):
