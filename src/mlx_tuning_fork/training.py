@@ -4,10 +4,9 @@ import yaml
 import math
 import mlx.optimizers as optim
 from mlx_lm.tuner.trainer import TrainingArgs, evaluate, train, iterate_batches
-from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule
+from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule, print_trainable_parameters
 from mlx_lm.tuner.datasets import load_dataset
 from mlx_lm.utils import load, save_config
-from mlx_lm.lora import print_trainable_parameters
 from types import SimpleNamespace
 from tqdm import tqdm
 from mlx_tuning_fork.config import CONFIG_DEFAULTS, yaml_loader
