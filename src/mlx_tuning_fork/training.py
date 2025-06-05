@@ -195,7 +195,6 @@ def composably_train(args, config, config_file, model, summary, tokenizer, train
                 range(1, num_iterations + 1),
                 iterate_batches(
                     dataset=train_set,
-                    tokenizer=tokenizer,
                     batch_size=args.batch_size,
                     max_seq_length=args.max_seq_length,
                     train=False)
