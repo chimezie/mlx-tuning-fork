@@ -19,6 +19,7 @@ DORA_TRAIN_TYPES = ['dora']
 
 @click.command()
 @click.option('--verbose/--no-verbose', default=False)
+@click.option('--token-count/--no-token-count', default=True)
 @click.option("--summary/--no-summary", default=False, help="Just summarize training data")
 @click.option('--train-type',
               type=click.Choice(ALL_TRAIN_TYPES, case_sensitive=False),
@@ -28,7 +29,7 @@ DORA_TRAIN_TYPES = ['dora']
 @click.option('--wandb-run', default=None, type=str,
               help='Wandb run name')
 @click.argument('config_files', nargs=-1)
-def main(verbose, summary, train_type, wandb_project, wandb_run, config_files):
+def main(verbose, token_count, summary, train_type, wandb_project, wandb_run, config_files):
     previous_adapter = None
     for config_file in config_files:
         with open(config_file, "r") as file:
@@ -56,12 +57,12 @@ def main(verbose, summary, train_type, wandb_project, wandb_run, config_files):
         model.freeze()
 
         composably_train(args, config, config_file, model, summary, tokenizer, train_type, wandb_project,
-                         wandb_run)
+                         wandb_run, token_count)
         if len(config_files) > 1:
             previous_adapter = str(Path(args.adapter_path) / "adapters.safetensors")
 
 def composably_train(args, config, config_file, model, summary, tokenizer, train_type, wandb_project,
-                     wandb_run):
+                     wandb_run, token_count):
     linear_to_lora_layers(
         model,
         args.num_layers,
@@ -191,21 +192,23 @@ def composably_train(args, config, config_file, model, summary, tokenizer, train
         total_num_tokens = 0
         max_tokens = 0
         _lengths = []
-        for it, info in zip(
-                range(1, num_iterations + 1),
-                iterate_batches(
-                    dataset=train_set,
-                    batch_size=args.batch_size,
-                    max_seq_length=args.max_seq_length,
-                    train=False)
-        ):
-            lengths = info[-1]
-            max_tokens = max(max_tokens, max(lengths))
-            _lengths.extend(lengths)
-            total_num_tokens += sum(lengths)
-        print(f"A total of {total_num_tokens:,} training tokens, {total_num_tokens / num_iterations:.3f} per "
-              f"step/iteration, an average of {total_num_tokens / len(_lengths):.3f} tokens per record, with"
-              f" the largest having {max_tokens:,} tokens.")
+        if token_count:
+            for it, info in zip(
+                    range(1, num_iterations + 1),
+                    iterate_batches(
+                        dataset=train_set,
+                        batch_size=args.batch_size,
+                        max_seq_length=args.max_seq_length,
+                        train=False)
+            ):
+                lengths = info[-1]
+                max_tokens = max(max_tokens, max(lengths))
+                _lengths.extend(lengths)
+                total_num_tokens += sum(lengths)
+        if token_count:
+            print(f"A total of {total_num_tokens:,} training tokens, {total_num_tokens / num_iterations:.3f} per "
+                  f"step/iteration, an average of {total_num_tokens / len(_lengths):.3f} tokens per record, with"
+                  f" the largest having {max_tokens:,} tokens.")
         print(f"mlx_lm.lora --val-batches {scaled_val_batches} \\\n"
               f"            --steps-per-report {scaled_steps_per_report} \\\n"
               f"            --steps-per-eval {scaled_steps_per_eval} \\\n"
