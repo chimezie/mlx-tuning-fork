@@ -209,6 +209,7 @@ def composably_train(args, config, config_file, model, summary, tokenizer, train
             print(f"A total of {total_num_tokens:,} training tokens, {total_num_tokens / num_iterations:.3f} per "
                   f"step/iteration, an average of {total_num_tokens / len(_lengths):.3f} tokens per record, with"
                   f" the largest having {max_tokens:,} tokens.")
+        print(f"On a model with {model.layers:,} layers")
         print(f"mlx_lm.lora --val-batches {scaled_val_batches} \\\n"
               f"            --steps-per-report {scaled_steps_per_report} \\\n"
               f"            --steps-per-eval {scaled_steps_per_eval} \\\n"
