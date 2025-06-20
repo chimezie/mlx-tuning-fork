@@ -5,7 +5,7 @@ import math
 import mlx.optimizers as optim
 from mlx_lm.tuner.trainer import TrainingArgs, evaluate, train, iterate_batches
 from mlx_lm.tuner.utils import linear_to_lora_layers, build_schedule, print_trainable_parameters
-from mlx_lm.tuner.datasets import load_dataset
+from mlx_lm.tuner.datasets import load_dataset, CacheDataset
 from mlx_lm.utils import load, save_config
 from types import SimpleNamespace
 from tqdm import tqdm
@@ -193,18 +193,18 @@ def composably_train(args, config, config_file, model, summary, tokenizer, train
         max_tokens = 0
         _lengths = []
         if token_count:
-            for it, info in zip(
+            for _, info in zip(
                     range(1, num_iterations + 1),
                     iterate_batches(
-                        dataset=train_set,
+                        dataset=CacheDataset(train_set),
                         batch_size=args.batch_size,
-                        max_seq_length=args.max_seq_length,
+                         max_seq_length=args.max_seq_length,
                         train=False)
             ):
                 lengths = info[-1]
-                max_tokens = max(max_tokens, max(lengths))
+                max_tokens = max(max_tokens, lengths.max().item())
                 _lengths.extend(lengths)
-                total_num_tokens += sum(lengths)
+                total_num_tokens += lengths.sum().item()
         if token_count:
             print(f"A total of {total_num_tokens:,} training tokens, {total_num_tokens / num_iterations:.3f} per "
                   f"step/iteration, an average of {total_num_tokens / len(_lengths):.3f} tokens per record, with"
